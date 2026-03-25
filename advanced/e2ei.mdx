@@ -1,0 +1,149 @@
+---
+title: End-to-End Identity (E2EI)
+description: Certificate-based identity verification for MLS conversations using OIDC and x509 certificates.
+---
+
+End-to-End Identity (E2EI) is Wire's certificate-based identity verification system for MLS (Messaging Layer Security) conversations. Instead of relying solely on device keys, E2EI binds each MLS client to a verified identity through an x509 certificate issued by your organisation's identity provider. This allows conversation participants to cryptographically verify that they are talking to the person they expect, not just a device.
+
+## E2EI and MLS
+
+E2EI is built on top of MLS and only applies to MLS conversations. Each Wire client that participates in an MLS conversation can optionally hold an E2EI certificate:
+
+- **Without E2EI**: The client is authenticated by its device key pair only. Other participants see a grey shield or no verification indicator.
+- **With E2EI**: The client holds an x509 certificate signed by an identity provider, cryptographically linking the Wire user handle to the device. Other participants see a verified identity indicator (green shield).
+
+## Enrollment flow
+
+Enrollment is the process of obtaining an E2EI certificate for the current device. It uses the OpenID Connect (OIDC) Authorization Code flow with PKCE.
+
+### Enrollment screen
+
+Users arrive at `E2EIEnrollmentScreen` when E2EI enrollment is required before they can start using the app (for example, when the team administrator has mandated E2EI). The screen has a single primary action button that starts the enrollment process.
+
+<Steps>
+  <Step title="Initial enrollment">
+    `GetE2EICertificateViewModel.getCertificate()` calls `enrollE2EI.initialEnrollment()` on the current session scope. This initialises the ACME-based enrollment on the Wire backend and returns an `InitialEnrollmentResult.Success` containing an `E2EIEnrollmentResult.Initialized` object with the OIDC parameters.
+  </Step>
+  <Step title="OAuth / OIDC authentication">
+    `OAuthUseCase` receives the authorization URL and claims from the enrollment result. It builds an `AuthorizationRequest` using AppAuth (with PKCE, scopes: `openid`, `email`, `profile`, `offline_access`) and launches the system browser or an in-app custom tab. The result is an ID token and auth state.
+  </Step>
+  <Step title="Finalize enrollment">
+    `GetE2EICertificateViewModel.handleOAuthResult()` passes the ID token and auth state back to `enrollE2EI.finalizeEnrollment()`. The Wire backend exchanges these for a signed x509 certificate.
+  </Step>
+  <Step title="MLS client finalization">
+    On success, `E2EIEnrollmentViewModel.handleE2EIEnrollmentResult()` sets `isCertificateEnrollSuccess = true`. The success dialog is shown and the user can optionally view the certificate details. Dismissing the dialog calls `finalizeMLSClientAfterE2EIEnrollment`, which completes MLS client registration, and navigates to the initial sync screen.
+  </Step>
+</Steps>
+
+### Error handling
+
+<CardGroup cols={2}>
+  <Card title="InitialEnrollmentResult.Failure.E2EIDisabled" icon="circle-x">
+    E2EI is not enabled for the team. Enrollment cannot proceed.
+  </Card>
+  <Card title="InitialEnrollmentResult.Failure.MissingTeamSettings" icon="circle-x">
+    The team has not configured the required E2EI settings on the backend.
+  </Card>
+  <Card title="OAuthResult.Failed" icon="circle-x">
+    The OIDC flow failed (network error, user cancelled, or the identity provider returned an error).
+  </Card>
+  <Card title="FinalizeEnrollmentResult.Failure" icon="circle-x">
+    Certificate issuance failed. The `isCertificateEnrollError` flag is set and an error dialog with a retry option is shown.
+  </Card>
+</CardGroup>
+
+### Token refresh
+
+`OAuthUseCase.launch()` first attempts to refresh an existing auth token silently using the stored `AuthState`. If token refresh fails, it falls back to a full login flow. This means users who have already authenticated with their identity provider may complete re-enrollment without seeing a browser prompt.
+
+## Certificate management in device settings
+
+After enrollment, users can view and manage their E2EI certificate from **Settings → Devices → [device] → Certificate details**.
+
+`E2eiCertificateDetailsScreen` displays the raw PEM certificate text. From the action menu users can:
+
+- **Copy to clipboard** — the full PEM string is copied.
+- **Download** — the certificate is saved as a `.txt` file named `wire-certificate-<handle>-<datetime>.txt`.
+
+The `E2eiCertificateDetailsViewModel` supports two navigation paths:
+
+| Path | Source |
+|---|---|
+| `DuringLoginCertificateDetails` | Certificate obtained during the enrollment flow (passed as a string). |
+| `AfterLoginCertificateDetails` | Certificate loaded from the stored `MlsClientIdentity.x509Identity` for an existing device. |
+
+## Verifying contacts via E2EI certificates
+
+When both participants in a conversation hold valid E2EI certificates, Wire can display a verified identity indicator. The x509 certificate contains the Wire user handle, which is checked against the conversation participant's identity. Users can open a participant's profile to view their device list and inspect individual certificate details.
+
+## Build flags
+
+### `is_mls_reset_enabled`
+
+Allows the MLS state to be reset from the developer debug screen. Useful during development or when migrating between MLS protocol versions.
+
+```json
+{
+  "is_mls_reset_enabled": true
+}
+```
+
+<Warning>
+Enabling MLS reset in production builds allows users to wipe their MLS key material. This should only be enabled in internal or development builds.
+</Warning>
+
+### `use_strict_mls_filter`
+
+When `true`, Wire applies a stricter filter when determining which conversations use MLS. This can be used to limit MLS to conversations that fully satisfy protocol requirements.
+
+```json
+{
+  "use_strict_mls_filter": false
+}
+```
+
+This flag defaults to `false` in all flavors except `internal`, where it can be toggled for testing.
+
+### `mls_read_receipts_enabled`
+
+Controls whether read receipts are sent and displayed in MLS conversations.
+
+```json
+{
+  "mls_read_receipts_enabled": false
+}
+```
+
+Read receipts in MLS conversations are disabled by default (`false`).
+
+## Enterprise deployment considerations
+
+<CardGroup cols={2}>
+  <Card title="Identity provider setup" icon="building">
+    Your organisation must operate or federate with an OIDC-compatible identity provider (e.g., Keycloak, Azure AD, Okta). The Wire backend must be configured with the IDP's well-known OIDC discovery URL.
+  </Card>
+  <Card title="Certificate authority" icon="shield-check">
+    Wire uses ACME to request certificates from the backend's internal certificate authority. No additional CA infrastructure is needed on the client side.
+  </Card>
+  <Card title="Mandatory enrollment" icon="lock">
+    Team administrators can make E2EI enrollment mandatory. Users who have not enrolled are shown `E2EIEnrollmentScreen` before accessing conversations.
+  </Card>
+  <Card title="Certificate renewal" icon="rotate">
+    Certificates have an expiry date. Wire monitors certificate validity and will prompt users to re-enroll when renewal is required. The OAuth token refresh path minimises user friction during renewal.
+  </Card>
+</CardGroup>
+
+<Note>
+E2EI enrollment requires network access to both the Wire backend and your organisation's OIDC identity provider. Ensure both are reachable from the user's device, including in VPN or split-tunnel configurations.
+</Note>
+
+## Key classes
+
+| Class | Location | Responsibility |
+|---|---|---|
+| `OAuthUseCase` | `feature/e2ei/` | Drives the OIDC Authorization Code + PKCE flow using AppAuth |
+| `E2EIEnrollmentScreen` | `ui/e2eiEnrollment/` | Enrollment entry-point screen shown when E2EI is required |
+| `E2EIEnrollmentViewModel` | `ui/e2eiEnrollment/` | Manages enrollment UI state and calls finalization use cases |
+| `GetE2EICertificateViewModel` | `ui/e2eiEnrollment/` | Coordinates initial enrollment and OAuth result handling |
+| `E2eiCertificateDetailsScreen` | `ui/settings/devices/e2ei/` | Displays the raw PEM certificate with copy/download actions |
+| `E2eiCertificateDetailsViewModel` | `ui/settings/devices/e2ei/` | Resolves the certificate from nav args and generates the download filename |

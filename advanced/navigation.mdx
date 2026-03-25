@@ -1,0 +1,291 @@
+---
+title: Navigation
+description: Compose Destinations-based navigation architecture, annotation system, deep links, and tablet dialog parity.
+---
+
+Wire Android uses [Compose Destinations](https://composedestinations.rafaelcosta.xyz/) for
+type-safe navigation. KSP generates a strongly-typed destination and nav-graph API at build
+time from annotations placed on composable screen functions. A custom `NavHostEngine`
+(`WireNavHostEngine`) sits on top of Compose Destinations to implement tablet-specific
+presentation policy without duplicating navigation call sites.
+
+## Navigation graph structure
+
+All destinations are collected under a single root nav graph, `WireRootGraph`, which is
+held by `MainNavHost`:
+
+```
+WireRootGraph
+├── LoginNavGraph
+│   └── NewLoginNavGraph
+├── HomeNavGraph
+│   └── (home destinations: conversations, archive, settings, vault, …)
+├── CreateAccountNavGraph
+│   ├── CreatePersonalAccountNavGraph
+│   └── CreateTeamAccountNavGraph
+├── NewConversationNavGraph
+└── PersonalToTeamMigrationNavGraph
+```
+
+The `HomeDestination` sealed class defines the top-level items in the home
+side-navigation drawer:
+
+| Destination | Description |
+|---|---|
+| `Conversations` | All conversations list with search bar and FAB |
+| `Archive` | Archived conversations |
+| `Settings` | User settings |
+| `Vault` | Wire Vault (secure storage) |
+| `Cells` | Wire Cells (file storage) |
+| `Meetings` | Meetings / scheduling |
+| `WhatsNew` | What's new / changelog |
+| `TeamManagement` | Team admin tools |
+
+## Destination annotation system
+
+Screens register themselves by annotating their composable with one of the
+Wire-specific destination annotations defined in
+`navigation/annotation/app/AppDestinations.kt`. Each annotation is itself
+annotated with `@Destination<NavGraph>` pointing to the correct nav graph and
+applying the standard wrapper stack.
+
+```kotlin
+// AppDestinations.kt — excerpt
+@Destination<WireRootNavGraph>(
+    wrappers = [WaitUntilTransitionEndsWrapper::class, TabletDialogWrapper::class],
+)
+internal annotation class WireRootDestination(
+    val route: String = COMPOSABLE_NAME,
+    val start: Boolean = false,
+    val navArgs: KClass<*> = Nothing::class,
+    val style: KClass<out DestinationStyle> = DestinationStyle.Default::class,
+)
+```
+
+Available annotation aliases:
+
+| Annotation | Target nav graph |
+|---|---|
+| `@WireRootDestination` | `WireRootNavGraph` |
+| `@WireHomeDestination` | `HomeNavGraph` |
+| `@WireLoginDestination` | `LoginNavGraph` |
+| `@WireNewLoginDestination` | `NewLoginNavGraph` |
+| `@WireCreateAccountDestination` | `CreateAccountNavGraph` |
+| `@WireCreatePersonalAccountDestination` | `CreatePersonalAccountNavGraph` |
+| `@WireCreateTeamAccountDestination` | `CreateTeamAccountNavGraph` |
+| `@WireNewConversationDestination` | `NewConversationNavGraph` |
+| `@WirePersonalToTeamMigrationDestination` | `PersonalToTeamMigrationNavGraph` |
+
+To register a new screen, annotate its composable function with the appropriate
+alias and KSP regenerates the nav graph on the next build:
+
+```kotlin
+@WireHomeDestination
+@Composable
+fun MyNewScreen(
+    navigator: Navigator,
+    viewModel: MyNewViewModel = hiltViewModel(),
+) {
+    // ...
+}
+```
+
+<Note>
+  Compose Destinations 2.3.x generates destination styles as immutable `val`
+  properties. Never try to mutate `Destination.style` at runtime — use
+  `WireNavHostEngine` and `TabletDialogRoutePolicy` instead (see below).
+</Note>
+
+## MainNavHost and Navigator
+
+`MainNavHost` is the single `DestinationsNavHost` composable for the whole app.
+It is responsible for:
+
+- Providing a `WireNavHostEngine` (custom engine — see below)
+- Sharing a `SharedTransitionScope` via `CompositionLocalProvider` for
+  animated shared-element transitions
+- Injecting cross-cutting dependencies (`Navigator`, `LoginTypeSelector`) into
+  all destinations via `dependenciesContainerBuilder`
+- Scoping shared ViewModels to nested graphs (e.g. `NewConversationViewModel`
+  lives at the `NewConversationNavGraph` level so all screens in that flow
+  share the same instance)
+
+```kotlin
+DestinationsNavHost(
+    navGraph = WireRootGraph,
+    engine = navHostEngine,
+    start = startDestination,
+    navController = navigator.navController,
+    dependenciesContainerBuilder = {
+        dependency(navigator)
+        navGraph(NewConversationGraph) {
+            val parentEntry = remember(navBackStackEntry) {
+                navController.getBackStackEntry(NewConversationGraph.route)
+            }
+            dependency(hiltViewModel<NewConversationViewModel>(parentEntry))
+        }
+    },
+)
+```
+
+`Navigator` wraps `NavHostController` and exposes type-safe methods:
+
+```kotlin
+class Navigator(
+    val finish: () -> Unit,
+    val navController: NavHostController,
+    val isAllowedToNavigate: (NavigationCommand) -> Boolean = { true },
+) : WireNavigator {
+    override fun navigate(navigationCommand: NavigationCommand) { /* ... */ }
+    override fun navigateBack() { /* ... */ }
+}
+```
+
+`rememberNavigator` creates a `Navigator` backed by a tracking nav controller
+that records the current destination name for analytics.
+
+## Deep link handling (ADR-0004)
+
+All deep link URI parsing is centralised in `DeepLinkProcessor`. Before this
+refactor, each ViewModel duplicated type-checking, error-logging, and
+authorisation-guard logic. `DeepLinkProcessor` now provides:
+
+- **Duplicate detection** — a single place verifies the deeplink type and logs errors.
+- **Authorisation guards** — shows a toast and aborts if the destination requires
+  a signed-in session that is absent.
+- **Call-state protection** — prevents account switching when a call is active,
+  preserving session integrity.
+- **Improved testability** — the class is independently testable without spinning
+  up a ViewModel.
+
+```kotlin
+// Conceptual usage in a ViewModel
+class WelcomeViewModel @Inject constructor(
+    private val deepLinkProcessor: DeepLinkProcessor,
+) : ViewModel() {
+
+    fun handleDeepLink(uri: Uri) {
+        viewModelScope.launch {
+            when (val result = deepLinkProcessor.process(uri)) {
+                is DeepLinkResult.OpenConversation -> navigator.navigate(/*...*/)
+                is DeepLinkResult.AuthRequired -> showToast(R.string.deeplink_auth_required)
+                is DeepLinkResult.Unknown -> { /* ignore */ }
+            }
+        }
+    }
+}
+```
+
+<Info>
+  Deep links that require an authenticated session display a user-facing toast
+  via `DeepLinkProcessor` rather than silently failing. This behaviour is now
+  tested in one place rather than scattered across multiple ViewModels.
+</Info>
+
+## Tablet dialog parity (ADR-0010)
+
+Before the Compose Destinations 2.3.x migration, 17 destinations used
+`DestinationStyle.Runtime` so they could be switched to `DialogNavigation` on
+tablets at runtime. After the migration destination styles became immutable,
+breaking tablet dialog presentation.
+
+The solution introduces two components:
+
+### WireNavHostEngine
+
+A custom `NavHostEngine` that overrides `composable(...)` registration to
+resolve the effective destination style before registering each destination
+with the `NavGraph`:
+
+```kotlin
+override fun <T> NavGraphBuilder.composable(
+    destination: TypedDestinationSpec<T>,
+    navController: NavHostController,
+    dependenciesContainerBuilder: ...,
+    manualComposableCalls: ManualComposableCalls,
+) {
+    val resolvedStyle = resolveTabletDialogParityStyle(
+        destinationRoute = destination.route,
+        originalStyle = destination.style,
+        manualAnimation = manualComposableCalls.manualAnimation(destination.route),
+        isTablet = navController.context.resources.configuration
+            .smallestScreenWidthDp >= TABLET_MIN_SCREEN_WIDTH_DP, // 600 dp
+    )
+    with(resolvedStyle) {
+        addComposable(destination, navController, dependenciesContainerBuilder, manualComposableCalls)
+    }
+}
+```
+
+### TabletDialogRoutePolicy
+
+The single source of truth for which routes must be presented as dialogs on
+tablets. It holds a `Set<String>` of base routes:
+
+```kotlin
+internal object TabletDialogRoutePolicy {
+    internal val destinationBaseRoutes: Set<String> = setOf(
+        "app/other_user_profile_screen",
+        "app/self_user_profile_screen",
+        "app/device_details_screen",
+        "app/group_conversation_details_screen",
+        // ... 13 more routes
+    )
+
+    internal fun shouldShowAsDialog(baseRoute: String): Boolean =
+        baseRoute in destinationBaseRoutes
+}
+```
+
+The `resolveTabletDialogParityStyle` function combines both:
+
+```kotlin
+internal fun resolveTabletDialogParityStyle(
+    destinationRoute: String,
+    originalStyle: DestinationStyle,
+    manualAnimation: DestinationStyle.Animated?,
+    isTablet: Boolean,
+): DestinationStyle = if (isTablet && TabletDialogRoutePolicy.shouldShowAsDialog(destinationRoute.getBaseRoute())) {
+    DialogNavigation          // force true dialog on tablet
+} else {
+    manualAnimation ?: originalStyle  // keep phone behaviour
+}
+```
+
+`TabletDialogWrapper` applies rounded-corner clipping when the same route
+policy identifies a destination as a tablet dialog, keeping visuals consistent.
+
+Both `MainNavHost` and the nested nav host in `HomeScreen` use
+`rememberWireNavHostEngine()`.
+
+<Warning>
+  `WireNavHostEngine` must be kept in sync with upstream Compose Destinations
+  engine behavior whenever the `compose-destinations` dependency is upgraded.
+  Diff the default engine against `WireNavHostEngine` and re-validate style
+  resolution after each upgrade.
+</Warning>
+
+### Maintenance rules for tablet dialog routes
+
+<Steps>
+  <Step title="Update the route list">
+    Add or remove the base route string in
+    `TabletDialogRoutePolicy.destinationBaseRoutes`.
+  </Step>
+  <Step title="Update tests">
+    Add or update cases in `TabletDialogRoutePolicyTest`.
+  </Step>
+  <Step title="Verify manually">
+    Check both tablet (smallest width ≥ 600 dp) and phone presentation for the
+    affected destination.
+  </Step>
+</Steps>
+
+## Navigation wrappers
+
+All Wire destination annotations include two wrappers applied in order:
+
+| Wrapper | Purpose |
+|---|---|
+| `WaitUntilTransitionEndsWrapper` | Delays the content until the entry/exit animation completes, preventing visual glitches during transitions. |
+| `TabletDialogWrapper` | Applies rounded-corner clipping to destinations that match the tablet dialog route policy. |

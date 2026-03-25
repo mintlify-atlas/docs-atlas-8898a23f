@@ -1,0 +1,201 @@
+---
+title: 'Build flavors'
+description: 'Overview of all Wire Android build flavors, their intended use, and key configuration differences.'
+keywords: ['android', 'build flavors', 'dev', 'staging', 'beta', 'prod', 'fdroid', 'logging']
+---
+
+Wire Android ships six build flavors, each with a distinct icon background color for easy visual identification. The flavor controls the default backend, logging behavior, feature flags, and application ID.
+
+For full configuration details, see [`default.json`](https://github.com/wireapp/wire-android/blob/develop/default.json) in the repository root.
+
+## Flavor overview
+
+| Flavor | Icon color | Application ID | Default backend | Logging | Analytics |
+|--------|-----------|----------------|-----------------|---------|----------|
+| **Dev** | Red | `com.waz.zclient.dev` | Wire Staging (anta) | Enabled | Disabled |
+| **Staging** | Orange | `com.waz.zclient.dev` | Wire Staging | Enabled | Enabled |
+| **Internal** | Green | `com.wire.internal` | Wire Production | Enabled | Enabled |
+| **Beta** | Blue | `com.wire.android.internal` | Wire Production | Enabled | Enabled |
+| **Prod** | White | `com.wire` | Wire Production | Disabled | Enabled |
+| **F-Droid** | White | `com.wire` | Wire Production | Disabled | Disabled |
+
+## Flavor details
+
+<Tabs>
+  <Tab title="Dev">
+    **Intended use:** Active feature development. Bleeding edge and unstable.
+
+    - Connects to the Wire Staging backend (`https://nginz-https.anta.wire.link`)
+    - Developer features and development API enabled
+    - SSL certificate validation can be ignored
+    - Logging uploaded to a third-party service for developer analysis
+    - Analytics disabled
+
+    ```json
+    {
+      "application_id": "com.waz.zclient.dev",
+      "developer_features_enabled": true,
+      "logging_enabled": true,
+      "development_api_enabled": true,
+      "ignore_ssl_certificates": true,
+      "analytics_enabled": false,
+      "default_backend_url_base_api": "https://nginz-https.anta.wire.link"
+    }
+    ```
+  </Tab>
+
+  <Tab title="Staging">
+    **Intended use:** QA testing. Imitates the production app experience with a staging backend.
+
+    - Connects to the Wire Staging backend (`https://staging-nginz-https.zinfra.io`)
+    - Developer features enabled, but development API is disabled
+    - Feature flags mirror the Prod flavor for accurate release testing
+    - Logging uploaded to a third-party service
+    - Analytics enabled
+
+    ```json
+    {
+      "application_id": "com.waz.zclient.dev",
+      "developer_features_enabled": true,
+      "logging_enabled": true,
+      "development_api_enabled": false,
+      "analytics_enabled": true,
+      "default_backend_url_base_api": "https://staging-nginz-https.zinfra.io"
+    }
+    ```
+  </Tab>
+
+  <Tab title="Internal">
+    **Intended use:** Currently unused. Retained from earlier development; likely to be removed.
+
+    - Connects to Wire Production backend
+    - Logging uploaded to a third-party service
+    - Analytics enabled
+
+    ```json
+    {
+      "application_id": "com.wire.internal",
+      "developer_features_enabled": true,
+      "logging_enabled": true,
+      "development_api_enabled": false,
+      "analytics_enabled": true
+    }
+    ```
+  </Tab>
+
+  <Tab title="Beta">
+    **Intended use:** Internal dogfood testing by Wire employees before features reach the general public.
+
+    - Connects to Wire Production backend
+    - Logging uploaded to a third-party service
+    - Analytics enabled
+    - May include features not yet available in Prod
+
+    ```json
+    {
+      "application_id": "com.wire.android.internal",
+      "developer_features_enabled": true,
+      "logging_enabled": true,
+      "development_api_enabled": false,
+      "analytics_enabled": true
+    }
+    ```
+  </Tab>
+
+  <Tab title="Prod">
+    **Intended use:** The public production release distributed on the Google Play Store.
+
+    - Connects to Wire Production backend (`https://prod-nginz-https.wire.com`)
+    - Logging disabled by default; users can enable it manually within the app, but logs are never uploaded
+    - Analytics enabled
+    - No developer features or development API
+
+    ```json
+    {
+      "application_id": "com.wire",
+      "developer_features_enabled": false,
+      "logging_enabled": false,
+      "development_api_enabled": false,
+      "analytics_enabled": true,
+      "default_backend_url_base_api": "https://prod-nginz-https.wire.com"
+    }
+    ```
+  </Tab>
+
+  <Tab title="F-Droid">
+    **Intended use:** Public production release distributed on F-Droid, without any closed-source dependencies.
+
+    - Same application ID and backend as Prod (`com.wire`)
+    - No Google Mobile Services (GMS) — FCM push is excluded
+    - Analytics completely disabled (no keys configured)
+    - Logging disabled
+
+    ```json
+    {
+      "application_id": "com.wire",
+      "developer_features_enabled": false,
+      "logging_enabled": false,
+      "analytics_enabled": false,
+      "analytics_app_key": "",
+      "analytics_server_url": ""
+    }
+    ```
+
+    <Note>
+      The F-Droid build excludes the Google GMS Gradle plugin entirely. This is detected automatically at build time via the `FLAVOR` environment variable or the Gradle task name.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Logging behavior
+
+<Warning>
+  Logs from **Dev**, **Staging**, **Internal**, and **Beta** builds are automatically uploaded to a third-party service (Datadog) for developer analysis. Do not use these builds with personal or sensitive accounts.
+</Warning>
+
+<Note>
+  **Prod** and **F-Droid** builds never upload logs. Users can enable local logging within the app settings and export log files manually, but logs remain on-device only.
+</Note>
+
+Wire does not log sensitive content such as message content or encryption keys. Unique identifiers are obfuscated in all log output.
+
+## Build types
+
+Each flavor can be combined with a build type:
+
+| Build type | Description |
+|------------|-------------|
+| `debug` | Not minified. Includes extra debugging tools. Slower at runtime. Can be profiled. |
+| `release` | Minified and optimized. Suitable for distribution. |
+
+The combined variant name follows the pattern `<flavor><BuildType>`. For example:
+
+```bash
+# Assemble a staging debug build
+./gradlew assembleStagingDebug
+
+# Assemble a production release build
+./gradlew assembleProdRelease
+
+# Assemble an F-Droid release build
+./gradlew assembleFdroidRelease
+```
+
+## Source sets
+
+Flavor-specific resources and code live under `app/src/<flavor>/`. The following source sets are present in the repository:
+
+```
+app/src/
+├── main/          # Shared code and resources
+├── debug/         # Debug build type overrides
+├── dev/           # Dev flavor resources
+├── staging/       # Staging flavor resources
+├── internal/      # Internal flavor resources
+├── prod/          # Prod flavor resources
+├── fdroid/        # F-Droid flavor resources (no GMS)
+├── nonfree/       # Shared resources for non-F-Droid flavors
+├── foss/          # Shared resources for FOSS (F-Droid) flavor
+├── public/        # Shared resources for public-facing flavors
+└── private/       # Shared resources for internal-only flavors
+```

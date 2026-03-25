@@ -1,0 +1,173 @@
+---
+title: "Messaging"
+description: "Conversations, message composition, file sharing, and message management in Wire Android."
+---
+
+Wire Android provides a full-featured messaging experience built around end-to-end encrypted conversations. This page covers conversation organization, message composition, file sharing, and message management.
+
+## Conversation List
+
+The conversation list is the primary entry point after login. It is organized into distinct sections:
+
+<CardGroup cols={2}>
+  <Card title="Conversations" icon="message">
+    All active 1:1 and group conversations, sorted by recent activity.
+  </Card>
+  <Card title="Favorites" icon="star">
+    Conversations pinned by the user for quick access.
+  </Card>
+  <Card title="New Activities" icon="bell">
+    Conversations with unread messages or recent activity.
+  </Card>
+  <Card title="Browse Channels" icon="rss">
+    Discover and join public channels (when `public_channels_enabled` is `true`).
+  </Card>
+</CardGroup>
+
+The list supports both paginated and non-paginated modes, controlled by the `paginated_conversation_list_enabled` flag (default: `true`). Search is available directly within the conversation list to quickly find contacts or groups.
+
+### Archived Conversations
+
+Conversations can be archived to keep the main list uncluttered. Archived conversations are hidden from the default view but remain accessible through a dedicated archive section. Archiving does not delete messages or leave the conversation.
+
+### Muting Conversations
+
+Each conversation can be individually muted to suppress notifications without leaving the conversation.
+
+## Message Composer
+
+The message composer sits at the bottom of each conversation screen and supports multiple input types.
+
+<CardGroup cols={2}>
+  <Card title="Text Messages" icon="keyboard">
+    Type and send plain text messages with support for rich text formatting.
+  </Card>
+  <Card title="Rich Text" icon="bold">
+    Toolbar buttons for **bold**, *italic*, and heading formatting.
+  </Card>
+  <Card title="Voice Messages" icon="microphone">
+    Record and send audio messages directly from the composer.
+  </Card>
+  <Card title="Location Sharing" icon="location-dot">
+    Share your current location as a message attachment.
+  </Card>
+</CardGroup>
+
+### Rich Text / Markdown Support
+
+The composer includes a rich text toolbar (`RichTextOptions`) with three formatting actions:
+
+- **Header** — marks text as a heading
+- **Bold** — wraps selected text in bold
+- **Italic** — wraps selected text in italic
+
+The toolbar is toggled from the composer action bar and can be dismissed via its close button.
+
+### Mentions
+
+Type `@` in the composer to trigger a member suggestion list. Selecting a name inserts an inline mention that notifies the mentioned user.
+
+### Typing Indicators
+
+While composing, other participants in the conversation see a real-time typing indicator.
+
+## Attachments and File Sharing
+
+The attachment panel (opened from the `+` button in the composer) provides the following options:
+
+| Option | Description |
+|---|---|
+| Share File | Browse and send any file from device storage |
+| Share Image | Pick one or more images from the gallery |
+| Take Photo | Capture a photo with the device camera |
+| Record Video | Record a video clip with the device camera |
+| Voice Message | Record an in-line audio message |
+| Share Location | Send current GPS location |
+
+File sharing can be restricted by deployment configuration. When `file_restriction_enabled` is `true`, only file types listed in `file_restriction_list` are permitted.
+
+<Note>
+The default `file_restriction_enabled` value is `false` (all file types allowed). When restrictions are enabled, the permitted extensions are:
+
+`3gpp, aac, amr, avi, bmp, css, csv, dib, doc, docx, eml, flac, gif, html, ico, jfif, jpeg, jpg, jpg-large, key, m4a, m4v, md, midi, mkv, mov, mp3, mp4, mpeg, mpeg3, mpg, msg, ods, odt, ogg, pdf, pjp, pjpeg, png, pps, ppt, pptx, psd, pst, rtf, sql, svg, tex, tiff, txt, vcf, vid, wav, webm, webp, wmv, xls, xlsx, xml`
+</Note>
+
+Multiple files and images can be selected and sent in a single action.
+
+## Self-Deleting Messages
+
+Self-deleting messages automatically delete themselves from all devices after a configurable timer expires. The feature is enabled globally via the `self_deleting_messages` flag (default: `true`).
+
+Users choose a timer duration per message from the composer settings. Available durations are:
+
+| Duration | Notes |
+|---|---|
+| Off | No automatic deletion |
+| 10 seconds | — |
+| 1 minute | Developer builds only |
+| 5 minutes | — |
+| 1 hour | — |
+| 1 day | — |
+| 1 week | — |
+| 4 weeks | — |
+
+<Note>
+The 1-minute option is only shown when `developer_features_enabled` is `true`. It is filtered out of release builds.
+</Note>
+
+Self-deleting messages are marked as ephemeral. Reply and reaction options are not available on ephemeral messages.
+
+## Message Reactions and Emoji
+
+Users can react to any non-ephemeral, non-composite message with an emoji. The reaction picker is accessible by long-pressing a message and selecting the reaction option from the context menu.
+
+- Reactions from all participants are aggregated and displayed as pill counters below the message.
+- Tapping an existing reaction pill toggles your own reaction.
+- Own reactions are highlighted in the reaction list.
+
+## Message Actions
+
+Long-pressing a message opens a context menu with the following actions (availability depends on message type and sender):
+
+<CardGroup cols={2}>
+  <Card title="React" icon="face-smile">
+    Add or change an emoji reaction. Not available on ephemeral or composite messages.
+  </Card>
+  <Card title="Details" icon="circle-info">
+    View delivery and read receipts for the message.
+  </Card>
+  <Card title="Copy" icon="copy">
+    Copy message text to the clipboard (text messages only).
+  </Card>
+  <Card title="Reply" icon="reply">
+    Quote and reply to the message. Not available on ephemeral or composite messages.
+  </Card>
+  <Card title="Edit" icon="pen">
+    Edit a message you sent (your own messages only).
+  </Card>
+  <Card title="Delete" icon="trash">
+    Delete a message. Always available, even while uploading.
+  </Card>
+</CardGroup>
+
+### Reply (Quote)
+
+Replying to a message embeds a quoted preview of the original message above the composer. The quoted message is rendered inline in the conversation thread so recipients can see the context.
+
+### Edit Message
+
+Editing updates the message content in place. An edited indicator is shown to all participants.
+
+### Delete Message
+
+Users can delete their own messages for everyone in the conversation or only for themselves. A confirmation dialog is shown before deletion.
+
+## Message Status
+
+Each sent message shows a delivery status indicator:
+
+- **Sending** — message is in transit
+- **Sent** — delivered to the server
+- **Delivered** — received by at least one other device
+- **Read** — read by the recipient (1:1 conversations, read receipts enabled)
+- **Failed** — delivery failed; can be retried

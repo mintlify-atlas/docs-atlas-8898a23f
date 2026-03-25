@@ -1,0 +1,132 @@
+---
+title: "Teams and Accounts"
+description: "Multi-account support, authentication options, team management, and user profiles in Wire Android."
+---
+
+Wire Android supports personal accounts and team accounts, with flexible authentication options and multi-account management built in.
+
+## Multi-Account Support
+
+Up to **3 accounts** can be signed in simultaneously on a single device, controlled by the `max_accounts` setting (default: `3`).
+
+Switching between accounts is available from the user profile screen (`SelfUserProfileScreen`). The current account's avatar and name are shown in a header, and other signed-in accounts are listed below for quick switching via the `OtherAccounts` component.
+
+<Note>
+All accounts share the same app instance and notification infrastructure, but each account's messages, keys, and profile data are fully isolated.
+</Note>
+
+## Authentication
+
+### Email and Password
+
+Users can register and log in with an email address and password. The registration flow consists of:
+
+<Steps>
+  <Step title="Overview">
+    The welcome screen explains Wire and prompts the user to create an account or log in.
+  </Step>
+  <Step title="Enter email">
+    The user provides an email address. Availability is validated against the backend.
+  </Step>
+  <Step title="Verify email">
+    A verification code is sent to the email address. The user enters the code to confirm ownership.
+  </Step>
+  <Step title="Set details">
+    The user sets their display name and optionally a username.
+  </Step>
+  <Step title="Choose username">
+    A unique @handle is set for the account.
+  </Step>
+  <Step title="Summary">
+    The account is created and the user is signed in.
+  </Step>
+</Steps>
+
+New account creation can be disabled by setting `allow_account_creation` to `false` (default: `true`). This is useful for closed enterprise deployments where only pre-provisioned accounts are permitted.
+
+Email changes after account creation are controlled by `allow_email_change` (default: `true`).
+
+### SSO Authentication
+
+<Info>
+SSO login is controlled by the `allow_sso_authentication_option` flag (default: `true`).
+</Info>
+
+When `allow_sso_authentication_option` is `true`, a **SSO Login** option is shown on the login screen alongside email/password. The SSO flow (`LoginSSOScreen` / `LoginSSOViewModel`) accepts a Wire SSO code and initiates a browser-based OAuth/SAML authentication flow against the configured identity provider.
+
+After successful authentication with the IdP, the app receives the session token and completes the login. If the result contains additional configuration (e.g., custom backend URL), the app applies it automatically.
+
+### Enable New Registration
+
+The `enable_new_registration` flag (default: `true` across all builds) controls whether the registration path is shown to users. Setting it to `false` hides the registration option entirely.
+
+## Team Creation and Management
+
+Users without an existing team can create one from the profile screen. The `CreateTeamInfoCard` component surfaces a prompt to create a team, which navigates to the Wire website team creation flow.
+
+### Guest Room Links
+
+<Info>
+Guest room links are controlled by the `enable_guest_room_link` flag (default: `true`).
+</Info>
+
+When enabled, team admins can generate a link to a group conversation that allows external guests to join without a Wire account. Password-protected guest links are supported when `is_password_protected_guest_link_enabled` is `true` (default: `true`).
+
+### Public Channels
+
+<Info>
+Public channels are controlled by the `public_channels_enabled` flag (default: `false`).
+</Info>
+
+When `public_channels_enabled` is `true`, a **Browse Channels** section appears in the conversation list. Users can discover and join public channels within their team. The `BrowseChannelsScreen` provides a searchable list of available channels with an empty state for teams that have not yet created any.
+
+## User Profiles
+
+### Self Profile
+
+The self profile screen (`SelfUserProfileScreen`) displays:
+
+- Display name and @handle
+- Avatar (supports camera capture and gallery picker via `AvatarPickerScreen`)
+- Current team affiliation
+- Account switcher for other signed-in accounts
+
+### QR Code Profile Sharing
+
+Each user has a QR code that encodes their Wire profile link. The `SelfQRCodeScreen` displays the QR code and provides options to:
+
+- Share the QR code image via the Android share sheet
+- Copy the profile link to the clipboard
+- Open the link in a browser
+
+Other users can scan the QR code to open the profile and start a conversation.
+
+### Other User Profiles
+
+Tapping another user's avatar or name opens their profile. From there, users can:
+
+- View display name, @handle, and team
+- Start a 1:1 conversation
+- Initiate a call
+- Add to or remove from a group
+- Block the user
+
+## Team Member Sync
+
+During initial synchronization (slow sync), the app fetches team member data from the backend. The maximum number of team members fetched is controlled by:
+
+```json
+"limit_team_members_fetch_during_slow_sync": 2000
+```
+
+This limit prevents excessive data transfer for very large teams. Members beyond the limit are fetched on demand when their data is needed.
+
+The `max_remote_search_result_count` setting (default: `30`) caps the number of results returned when searching for users outside the local team.
+
+## Enterprise Mobile Management (EMM)
+
+<Info>
+`emm_support_enabled` is `true` by default, enabling compatibility with enterprise mobile device management solutions.
+</Info>
+
+EMM support allows administrators to manage Wire configuration and enforce policies (such as app lock) through MDM profiles.

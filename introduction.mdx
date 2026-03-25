@@ -1,0 +1,80 @@
+---
+title: "Wire Android"
+description: "Open-source, end-to-end encrypted messaging and calling for Android"
+---
+
+<img
+  src="https://media.brand.dev/b732fdef-07e5-4794-ab62-5ae72908003b.svg"
+  alt="Wire"
+  style={{ height: "48px", marginBottom: "24px" }}
+/>
+
+Wire for Android is a fully open-source, end-to-end encrypted messaging and calling application built with Kotlin and Jetpack Compose. It supports both the MLS (Messaging Layer Security) and Proteus protocols, providing state-of-the-art cryptographic security for personal and enterprise communications.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build and run Wire Android locally in minutes
+  </Card>
+  <Card title="Build Flavors" icon="layer-group" href="/build-flavors">
+    Understand Dev, Staging, Beta, Prod, and F-Droid variants
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/build-flags">
+    Customize build-time flags and backend settings
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/advanced/architecture-overview">
+    Explore the modular Kotlin/Compose architecture
+  </Card>
+</CardGroup>
+
+## What is Wire Android?
+
+Wire for Android is the mobile client of the Wire secure communication platform. The repository contains the full open-source Android client, which you can build yourself. It connects to Wire's backend servers (or a self-hosted backend) and provides:
+
+- **End-to-end encrypted messaging** — Every message is encrypted on-device using MLS or Proteus. Wire never has access to message content.
+- **Voice and video calling** — Powered by Wire's AVS (Audio-Video Signaling) library for real-time communication.
+- **Team collaboration** — Group conversations, channels, and team administration for enterprise deployments.
+- **Enterprise-grade security** — End-to-end identity (E2EI) certificates, legal hold compliance, and EMM support.
+
+## Key features
+
+<CardGroup cols={3}>
+  <Card title="E2E Encryption" icon="lock">
+    MLS and Proteus protocols ensure messages are encrypted before leaving your device
+  </Card>
+  <Card title="Voice & Video" icon="video">
+    Crystal-clear calls with end-to-end encryption via the AVS library
+  </Card>
+  <Card title="Multi-Account" icon="users">
+    Sign in with up to 3 accounts simultaneously
+  </Card>
+  <Card title="Self-Deleting Messages" icon="clock">
+    Configure messages to automatically delete after a set time
+  </Card>
+  <Card title="E2EI Certificates" icon="certificate">
+    Verify contact identity with end-to-end identity certificates
+  </Card>
+  <Card title="EMM Support" icon="building">
+    Enterprise Mobility Management with managed configurations
+  </Card>
+  <Card title="Legal Hold" icon="scale-balanced">
+    Enterprise compliance with legal hold conversation recording
+  </Card>
+  <Card title="Backup & Restore" icon="floppy-disk">
+    Cross-platform backup compatible with Wire Desktop and iOS
+  </Card>
+  <Card title="F-Droid" icon="mobile">
+    Available on F-Droid with no closed-source dependencies
+  </Card>
+</CardGroup>
+
+## Open source differences
+
+The open-source build differs from the Play Store binary in two ways:
+
+<Warning>
+  The open-source project does not include API keys for third-party services, and links against the open-source AVS library rather than the proprietary version used in the Play Store build. This may result in slightly different call quality characteristics.
+</Warning>
+
+## License
+
+Wire for Android is licensed under the [GNU General Public License v3.0](https://github.com/wireapp/wire-android/blob/develop/LICENSE). The Wire trademark and associated logos remain the exclusive property of Wire Swiss GmbH and may not be used without express written consent.

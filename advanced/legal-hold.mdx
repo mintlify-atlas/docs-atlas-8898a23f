@@ -1,0 +1,115 @@
+---
+title: Legal Hold
+description: Enterprise compliance feature that allows team administrators to retain conversation records for regulatory purposes.
+---
+
+Legal hold is an enterprise compliance feature that enables Wire team administrators to place users or conversations under legal hold. When active, messages in affected conversations are retained on the Wire backend for regulatory or legal reasons, bypassing the normal message expiry rules.
+
+<Warning>
+Legal hold affects end-to-end encryption. Messages in conversations that include a user under legal hold are accessible to the legal hold device maintained by the team administrator. Wire displays clear visual indicators whenever legal hold is active in a conversation.
+</Warning>
+
+## How legal hold works
+
+Legal hold is initiated entirely by **team administrators** through the Wire backend or management console — individual users cannot enable legal hold for themselves. When an administrator places a user under legal hold:
+
+1. The Wire backend sends a legal hold request to the affected user's devices.
+2. The user's Wire app shows a dialog asking them to accept the request.
+3. Once accepted, a legal hold device is silently added to the user's client list.
+4. All subsequent messages in conversations that include the user are also encrypted for the legal hold device, making them readable by the administrator.
+5. Other participants in those conversations see a banner indicating legal hold is active.
+
+## Legal hold states
+
+The `LegalHoldUIState` sealed interface represents the three states visible to a conversation participant:
+
+| State | Description |
+|---|---|
+| `None` | Legal hold is not active for this conversation. |
+| `Pending` | A legal hold request has been received but not yet accepted by the user. |
+| `Active` | Legal hold is in effect. Messages are being retained. |
+
+## UI flows
+
+### Receiving a legal hold request
+
+When the backend sends a legal hold request, `LegalHoldRequestedViewModel` detects it by observing `ObserveLegalHoldRequestUseCase`. The `LegalHoldRequestedState.Visible` state is set, which causes `LegalHoldRequestedDialog` to appear.
+
+The dialog displays:
+- The **fingerprint** of the legal hold device.
+- An optional **password field** when the user's account requires password confirmation (`requiresPassword = true`).
+- A **"Learn more"** link to Wire's legal hold documentation.
+- **Accept** and **Not now** buttons.
+
+<Steps>
+  <Step title="User reviews the request">
+    Wire shows the legal hold device fingerprint so the user can verify it with their administrator.
+  </Step>
+  <Step title="User enters password (if required)">
+    Accounts with a password require the user to confirm their password before accepting. The Accept button is disabled until a valid password is entered.
+  </Step>
+  <Step title="User taps Accept">
+    `ApproveLegalHoldRequestUseCase` is called. On success, the dialog is dismissed and legal hold becomes active.
+  </Step>
+  <Step title="User taps Not now">
+    The dialog is dismissed without accepting. The pending banner remains in conversations until the user accepts or the request is withdrawn.
+  </Step>
+</Steps>
+
+Possible errors during acceptance:
+
+| Error | Cause |
+|---|---|
+| `InvalidCredentialsError` | The entered password was incorrect or a password was required but not provided. |
+| `GenericError` | Any other backend or network failure. |
+
+### Being subject to legal hold
+
+Once a user has accepted legal hold, the `LegalHoldSubjectBanner` appears at the top of every affected conversation. Tapping the banner opens a context-specific information dialog:
+
+| Dialog | Shown when |
+|---|---|
+| `LegalHoldSubjectConversationDialog` | Tapping the banner in a group or 1:1 conversation. |
+| `LegalHoldSubjectConnectionDialog` | Viewing a connection request with a legal-hold user. |
+| `LegalHoldSubjectProfileDialog` | Viewing a user profile when that user is under legal hold. |
+| `LegalHoldSubjectMessageDialog` | Long-pressing a message in a conversation with legal hold active. |
+
+All subject dialogs extend `LegalHoldSubjectBaseDialog`, which includes a standard description and a **"Learn more"** link.
+
+### Legal hold deactivation
+
+When an administrator lifts legal hold from a user, the app detects this through `ObserveLegalHoldChangeNotifiedForSelfUseCase`. If the new state is `LegalHoldState.Disabled` and the user has not yet been notified, `LegalHoldDeactivatedDialog` is shown.
+
+Dismissing the dialog calls `MarkLegalHoldChangeAsNotifiedForSelfUseCase` to record that the user has been informed, preventing the dialog from reappearing.
+
+<Note>
+If the backend reports that legal hold changed to an **enabled** state (rather than disabled), the app silently marks the change as notified without showing a dialog — the pending/active banners already communicate this state.
+</Note>
+
+### Connection failed
+
+`LegalHoldSubjectConnectionFailedDialog` is shown when Wire cannot establish a connection to a user who is under legal hold. The dialog explains the situation and provides a **"Learn more"** link. Users can dismiss it with **OK**.
+
+## Conversation banners
+
+Two banner components appear at the top of conversation screens based on `LegalHoldUIState`:
+
+| Component | State | Content |
+|---|---|---|
+| `LegalHoldPendingBanner` | `Pending` | "Legal hold is pending" with a tappable **Accept** link. |
+| `LegalHoldSubjectBanner` | `Active` | "This conversation is subject to **legal hold**" with the label underlined and tappable. |
+
+Both banners are implemented on top of `LegalHoldBaseBanner`. Tapping either banner navigates the user to the relevant information dialog or the legal hold acceptance flow.
+
+## Interaction with end-to-end encryption
+
+Legal hold introduces a deliberately trusted third party into the encryption model:
+
+- The legal hold device is added to the MLS or Proteus client list of the user.
+- Wire automatically encrypts messages for this device in addition to the user's regular devices.
+- Conversations that include a legal-hold participant are clearly marked with banners to inform all conversation members.
+- Users cannot send messages in a conversation with active legal hold without implicitly acknowledging that messages are being retained — the send action proceeds normally but the UI makes retention visible at all times.
+
+## Who can trigger legal hold
+
+Only **team administrators** can enable or disable legal hold through the Wire backend management interface. Individual users can only accept or defer a pending request; they cannot initiate, disable, or modify legal hold themselves.

@@ -1,0 +1,103 @@
+---
+title: 'Translations'
+description: 'How to contribute translations to Wire Android using Crowdin.'
+---
+
+Wire Android uses [Crowdin](https://crowdin.com/) to manage translations. All string resources are sourced from English base files and translated by the community through the Crowdin platform.
+
+## Getting access
+
+<Steps>
+  <Step title="Create a Crowdin account">
+    Sign up at [crowdin.com](https://crowdin.com/) if you do not already have an account.
+  </Step>
+  <Step title="Request access to the Wire Android project">
+    Visit the [wire-android-reloaded Crowdin project](https://crowdin.com/project/wire-android-reloaded) and request access to contribute translations.
+  </Step>
+  <Step title="Start translating">
+    Once access is granted, you can translate strings directly in the Crowdin editor.
+  </Step>
+</Steps>
+
+## Supported languages
+
+For the official list of supported languages and which are open for community contributions, refer to the [Wire language support page](https://support.wire.com/hc/en-us/articles/202856874-Language-support).
+
+The following locale directories are currently present in the repository:
+
+`ar`, `bg`, `bs`, `cs`, `da`, `de`, `el`, `es`, `et`, `fi`, `fr`, `hr`, `hu`, `it`, `ja`, `lb`, `lt`, `lv`, `mk`, `mt`, `nl`, `pl`, `pt`, `ro`, `ru`, `si`, `sk`, `sl`, `sq`, `sr`, `sv`, `tr`, `uk`, `zh`, and Serbian variants (`b+sr+Cyrl+ME`, `b+sr+Latn`, `b+sr+Latn+ME`).
+
+## String resource structure
+
+String resources are split across several modules. Each module has its own `strings.xml` source file that Crowdin manages independently.
+
+| Module | Source file |
+|--------|-------------|
+| `app` | `app/src/main/res/values/strings.xml` |
+| `core/ui-common` | `core/ui-common/src/main/res/values/strings.xml` |
+| `features/cells` | `features/cells/src/main/res/values/strings.xml` |
+| `features/meetings` | `features/meetings/src/main/res/values/strings.xml` |
+| `features/sketch` | `features/sketch/src/main/res/values/strings.xml` |
+| `features/sync` | `features/sync/src/main/res/values/strings.xml` |
+
+Translated files follow the Android resource convention for locale qualifiers:
+
+```
+app/src/main/res/
+├── values/
+│   └── strings.xml          # English source (default)
+├── values-de/
+│   └── strings.xml          # German translation
+├── values-fr/
+│   └── strings.xml          # French translation
+└── values-zh/
+    └── strings.xml          # Chinese translation
+```
+
+### Translatable vs non-translatable strings
+
+Some strings in the source file are marked `translatable="false"` and are intentionally excluded from translation (for example, debug identifiers). These strings do not appear in the Crowdin editor.
+
+```xml
+<!-- Translatable string — appears in Crowdin -->
+<string name="label_cancel">Cancel</string>
+
+<!-- Non-translatable string — excluded from Crowdin -->
+<string name="debug_id" translatable="false">Debug Identifier</string>
+```
+
+## Crowdin configuration
+
+The Crowdin integration is configured in `crowdin.yml` at the repository root. It maps each source file to its translated output using the `%two_letters_code%` placeholder for the locale qualifier.
+
+```yaml
+preserve_hierarchy: true
+
+files:
+  - source: /app/src/main/res/values/strings.xml
+    translation: /app/src/main/res/values-%two_letters_code%/%original_file_name%
+```
+
+<Info>
+New module string files are added to `crowdin.yml` via the `addEntryToCrowdinFile` Gradle task, but existing entries are not removed automatically.
+</Info>
+
+## How translations get merged
+
+Translation synchronisation is fully automated through GitHub Actions.
+
+<CardGroup cols={2}>
+  <Card title="Source upload" icon="upload">
+    When changes are pushed to the `develop` branch, new and updated English strings are automatically uploaded to Crowdin for translation.
+  </Card>
+  <Card title="Translation download" icon="download">
+    Completed translations are periodically downloaded from Crowdin and a pull request is opened automatically against the `develop` (or `release/candidate`) branch.
+  </Card>
+</CardGroup>
+
+The automated PR is created by the `AndroidBob` bot with:
+- Branch name: `chore/sync-and-update-localization-<base-branch>`
+- Labels: `l10n`, `crowdin`
+- Reviewers: `@wireapp/android`
+
+Only translated strings are downloaded; untranslated strings are skipped (`skip_untranslated_strings: true`), so the English fallback in `values/strings.xml` is used at runtime for any language with incomplete coverage.

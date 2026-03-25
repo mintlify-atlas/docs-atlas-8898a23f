@@ -1,0 +1,212 @@
+---
+title: 'White-label customization'
+description: 'How to produce a custom-branded Wire Android build using a private customization repository.'
+sidebarTitle: 'Customization'
+keywords: ['white-label', 'customization', 'custom build', 'branding', 'OEM', 'enterprise']
+---
+
+Wire Android supports producing fully white-labeled APKs with custom branding, build flags, and resources — without modifying the main repository. Customizations are stored in a **private git repository** that is checked out at build time and merged with the defaults.
+
+<Info>
+  This system is designed so that customer-specific assets and configuration remain private. The main Wire Android repository only contains defaults.
+</Info>
+
+## What can be customized
+
+<CardGroup cols={2}>
+  <Card title="Build flags" icon="toggle-on">
+    Any value in `default.json` — feature flags, backend URLs, security settings, and more.
+  </Card>
+  <Card title="Strings" icon="text">
+    Any Android string resource, by supplying a partial XML file that overrides only the strings you need.
+  </Card>
+  <Card title="Drawables" icon="image">
+    PNG, WebP, and vector drawable resources such as the app logo and splash screen.
+  </Card>
+  <Card title="Mipmaps" icon="layers">
+    Launcher icons at all density buckets (`mdpi`, `hdpi`, `xhdpi`, `xxhdpi`, `xxxhdpi`).
+  </Card>
+</CardGroup>
+
+---
+
+## Environment variables
+
+Customization is triggered at Gradle configuration time by the presence of the `CUSTOM_REPOSITORY` variable. All variables can be set as **OS environment variables** or in the **`local.properties`** file at the project root.
+
+| Variable | Required | Description |
+|---|---|---|
+| `CUSTOM_REPOSITORY` | Yes | HTTPS or SSH URL of the git repository containing customizations. |
+| `CUSTOM_BRANCH` | Yes | Branch of `CUSTOM_REPOSITORY` to check out. |
+| `GRGIT_USER` | Yes | Git username for authenticating with `CUSTOM_REPOSITORY`. |
+| `GRGIT_PASSWORD` | No | Git password or personal access token. May be omitted for SSH key auth. |
+| `CUSTOM_FOLDER` | Yes | Path to the "customization root" directory inside the checked-out repository. |
+| `CLIENT_FOLDER` | Yes | Name of the specific build directory inside `CUSTOM_FOLDER`. |
+
+<Note>
+  `CUSTOM_FOLDER` and `CLIENT_FOLDER` exist for backward compatibility with the legacy Wire Android app. Together they form the path `CUSTOM_FOLDER/CLIENT_FOLDER/custom-reloaded.json` within the checked-out repository.
+</Note>
+
+### local.properties (non-CI builds)
+
+For local development without exporting environment variables, add the values directly to `local.properties`:
+
+```properties
+CUSTOM_REPOSITORY=https://github.com/your-org/wire-customizations.git
+CUSTOM_BRANCH=main
+GRGIT_USER=your-username
+GRGIT_PASSWORD=ghp_yourPersonalAccessToken
+CUSTOM_FOLDER=customizationRoot
+CLIENT_FOLDER=myCustomBuild
+```
+
+<Warning>
+  Do not commit `local.properties` to version control. It is already listed in the default `.gitignore`.
+</Warning>
+
+---
+
+## Customization repository structure
+
+The customization repository must follow this directory layout:
+
+```
+customizationRoot/
+└── myCustomBuild/
+    ├── custom-reloaded.json
+    └── resources/
+        ├── mipmap/
+        │   ├── ic_launcher.png
+        │   └── ic_launcher_round.png
+        └── values/
+            └── custom-string-replacements.xml
+```
+
+- **`custom-reloaded.json`** — overrides for build flags and values (same schema as `default.json`).
+- **`resources/`** — Android resource files that replace the default flavor resources at build time.
+
+---
+
+## Overriding build flags
+
+`custom-reloaded.json` uses the same JSON schema as `default.json`. You only need to include the keys you want to override.
+
+### Example
+
+`default.json` (in the main repository):
+
+```json
+{
+    "flavors": {
+        "prod": {
+            "app_name": "Wire - Prod Flavor"
+        }
+    },
+    "app_name": "Wire"
+}
+```
+
+`custom-reloaded.json` (in your private repository):
+
+```json
+{
+    "flavors": {
+        "prod": {
+            "app_name": "My Custom App - Prod Flavor"
+        }
+    },
+    "app_name": "My Custom App"
+}
+```
+
+### Value resolution priority
+
+When the same key is defined in multiple places, the build system resolves it using the following priority order (highest wins):
+
+| Priority | Source | Example value |
+|---|---|---|
+| 1 — Highest | Custom file, flavor-specific | `My Custom App - Prod Flavor` |
+| 2 | Custom file, global | `My Custom App` |
+| 3 | Default file, flavor-specific | `Wire - Prod Flavor` |
+| 4 — Lowest | Default file, global | `Wire` |
+
+<Tip>
+  You only need to specify the keys you want to change. Unspecified keys fall through to the default values automatically.
+</Tip>
+
+<Note>
+  Flavor names used in `custom-reloaded.json` must exactly match flavor names in `default.json` (`prod`, `dev`, `staging`, `beta`, `internal`, `fdroid`). A mismatch causes a build error.
+</Note>
+
+---
+
+## Overriding resources
+
+Files placed in `resources/` inside the customization directory are copied into every flavor's `src/<flavor>/res/` directory before compilation. This means a single set of custom resources applies across all flavors.
+
+### How the copy works
+
+<Steps>
+  <Step title="Gradle configuration phase">
+    The Gradle build system checks out the customization repository and locates the `resources/` directory.
+  </Step>
+  <Step title="Files are copied to each flavor">
+    Every file under `resources/` is copied to `app/src/<flavor>/res/` for all flavors (`prod`, `dev`, `staging`, `beta`, `internal`, `fdroid`). Existing files are overwritten.
+  </Step>
+  <Step title="Android resource merging">
+    During compilation, Android's standard [Resource Merging](https://developer.android.com/studio/write/add-resources#resource_merging) picks the flavor-specific resource over the `main` source set, meaning your custom resources take precedence.
+  </Step>
+</Steps>
+
+### Drawables and mipmaps
+
+Place replacement images at the same relative path as the originals. For example, to replace the launcher icon:
+
+```
+resources/
+└── mipmap/
+    └── ic_launcher.png   # replaces app/src/main/res/mipmap/ic_launcher.png for all flavors
+```
+
+Because resources are copied into flavor directories, the custom `ic_launcher.png` takes precedence over any file at the same path in `src/main/res/`.
+
+### String overrides
+
+You do not need to copy the entire strings file. Android Resource Merging lets you supply a partial file containing only the strings you want to change.
+
+**Original** `app/src/main/res/values/all-strings.xml`:
+
+```xml
+<resources>
+    <string name="app_name">Wire</string>
+    <string name="tagline">Secure messenger</string>
+</resources>
+```
+
+**Custom** `resources/values/custom-strings.xml`:
+
+```xml
+<resources>
+    <string name="app_name">Acme Messenger</string>
+</resources>
+```
+
+Result: the built app displays `Acme Messenger` as the app name. The `tagline` string is unchanged because it was not included in the override file.
+
+<Info>
+  String override files can have any filename (e.g., `custom-strings.xml`). Android merges all XML files in a `values/` directory together.
+</Info>
+
+---
+
+## How the build system works
+
+The customization logic lives in [`buildSrc/src/main/kotlin/customization/`](https://github.com/wireapp/wire-android/tree/main/buildSrc/src/main/kotlin/customization).
+
+| Class/File | Responsibility |
+|---|---|
+| `Customization.kt` | Entry point. Reads environment variables / `local.properties`, clones the repository, resolves the config file path. |
+| `ConfigurationFileImporter.kt` | Parses `default.json` and `custom-reloaded.json`, normalizes flavor overrides into a flat per-flavor map. |
+| `BuildTimeConfiguration.kt` | Data class holding the resolved flavor settings and the path to the custom resources directory. |
+| `ResourcesOverrider.kt` | Copies custom resource files into each flavor's `res/` directory before compilation. |
+| `FeatureConfigs.kt` | Enum of all recognized configuration keys and their types, used to generate Android `BuildConfig` fields. |

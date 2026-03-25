@@ -1,0 +1,298 @@
+---
+title: Dependency Injection
+description: Hilt DI setup, application-scoped vs. account-scoped modules, and Kalium session integration.
+---
+
+Wire Android uses [Hilt](https://dagger.dev/hilt/) for dependency injection throughout the
+application. All annotation processing is done by **KSP** (Kotlin Symbol Processing) rather
+than KAPT, giving faster incremental builds. A dedicated Gradle convention plugin
+(`wire.hilt`) applies the Hilt plugin, KSP, and the required dependencies to any module
+that needs them.
+
+## Hilt component hierarchy
+
+Hilt's standard Android component tree maps directly onto Wire's scoping strategy:
+
+```
+SingletonComponent          ← application-lifetime singletons
+└── ActivityRetainedComponent
+    └── ViewModelComponent  ← per-ViewModel (most use cases live here)
+        └── ViewComponent
+ServiceComponent            ← background services (websocket, etc.)
+```
+
+## Application-scoped modules
+
+Modules installed in `SingletonComponent` are created once for the lifetime of
+the process.
+
+### AppModule
+
+`app/di/AppModule.kt` — installed in `SingletonComponent`.
+
+Provides Android framework singletons and app-wide utilities:
+
+| Binding | Type |
+|---|---|
+| `Context` | `ApplicationContext` |
+| `DispatcherProvider` | `DefaultDispatcherProvider` |
+| `UiTextResolver` | `AndroidUiTextResolver` |
+| `NotificationManager` / `NotificationManagerCompat` | System services |
+| `AudioManager` | System service |
+| `CurrentTimestampProvider` | `() -> Long` |
+| `AnalyticsConfiguration` | Enabled or Disabled based on `BuildConfig.ANALYTICS_ENABLED` |
+| `AnonymousAnalyticsManager` | Singleton analytics manager |
+| `MessageSharedState` | Shared state for message composition |
+
+### CoreLogicModule
+
+`app/di/CoreLogicModule.kt` — the bridge between Hilt and Kalium.
+
+```kotlin
+@Module
+@InstallIn(SingletonComponent::class)
+class CoreLogicModule {
+
+    @KaliumCoreLogic
+    @Singleton
+    @Provides
+    fun provideCoreLogic(
+        @ApplicationContext context: Context,
+        kaliumConfigs: KaliumConfigs,
+        userAgentProvider: UserAgentProvider,
+    ): CoreLogic = CoreLogic(
+        userAgent = userAgentProvider.defaultUserAgent,
+        appContext = context,
+        rootPath = context.getDir("accounts", Context.MODE_PRIVATE).path,
+        kaliumConfigs = kaliumConfigs,
+    )
+}
+```
+
+`CoreLogic` is the single entry point into Kalium. Every use case is obtained
+from it — never instantiated directly. The `@KaliumCoreLogic` qualifier
+distinguishes it from other `CoreLogic`-shaped objects that might exist in tests.
+
+`CoreLogicModule` also exposes global (session-independent) use cases directly
+into the graph:
+
+```kotlin
+@Provides
+fun provideCurrentSessionUseCase(@KaliumCoreLogic coreLogic: CoreLogic) =
+    coreLogic.getGlobalScope().session.currentSession
+
+@Provides
+fun provideObserveAllSessionsUseCase(@KaliumCoreLogic coreLogic: CoreLogic): ObserveSessionsUseCase =
+    coreLogic.getGlobalScope().session.allSessionsFlow
+```
+
+## Account-scoped (ViewModelScoped) modules
+
+Use cases that operate on a specific user account are scoped to
+`ViewModelComponent` using `@ViewModelScoped`. This scope is tied to the
+lifetime of a single `ViewModel` — it is created when the ViewModel is created
+and destroyed when the ViewModel is cleared.
+
+### How the current account is resolved
+
+`SessionModule` (also in `CoreLogicModule.kt`) resolves the active `UserId` at
+ViewModel creation time:
+
+```kotlin
+@Module
+@InstallIn(ViewModelComponent::class)
+class SessionModule {
+
+    @CurrentAccount
+    @ViewModelScoped
+    @Provides
+    fun provideCurrentSession(@KaliumCoreLogic coreLogic: CoreLogic): UserId = runBlocking {
+        when (val result = coreLogic.getGlobalScope().session.currentSession()) {
+            is CurrentSessionResult.Success -> result.accountInfo.userId
+            else -> error("no current session was found")
+        }
+    }
+}
+```
+
+All account-scoped modules then inject `@CurrentAccount UserId` to call
+`coreLogic.getSessionScope(currentAccount)` and extract the relevant use case:
+
+```kotlin
+@ViewModelScoped
+@Provides
+fun provideLogoutUseCase(
+    @KaliumCoreLogic coreLogic: CoreLogic,
+    @CurrentAccount currentAccount: UserId,
+): LogoutUseCase = coreLogic.getSessionScope(currentAccount).logout
+```
+
+<Info>
+  `@ViewModelScoped` means the resolved `UserId` — and every use case derived
+  from it — is cached for the lifetime of the ViewModel. If the active account
+  changes, the ViewModel (and its scope) is recreated, picking up the new
+  session automatically.
+</Info>
+
+### accountScoped/ modules
+
+The `app/di/accountScoped/` directory contains one Hilt module per domain area.
+Each module is installed in `ViewModelComponent` and follows the same pattern:
+resolve a Kalium scope object, then expose individual use cases from it.
+
+<CardGroup cols={2}>
+  <Card title="ConversationModule" icon="message-square">
+    Provides all conversation use cases: observe list, create group/channel,
+    add/remove members, update muted status, manage legal hold, folders, etc.
+    Derives use cases from `ConversationScope`.
+  </Card>
+  <Card title="CallsModule" icon="phone">
+    Provides call lifecycle use cases: start/end call, mute/unmute, video
+    controls, speaker toggling, observe incoming/ongoing calls.
+    Derives use cases from `CallsScope`.
+  </Card>
+  <Card title="MessageModule" icon="file-text">
+    Provides message sending, deletion, reactions, read receipts, and asset
+    upload use cases.
+  </Card>
+  <Card title="AuthenticationModule" icon="key">
+    Provides authentication use cases scoped to the current account (e.g.
+    credential refresh, E2EI certificate management).
+  </Card>
+  <Card title="UserModule" icon="user">
+    Provides self-user and other-user observation, handle/display-name updates,
+    avatar management.
+  </Card>
+  <Card title="ClientModule" icon="monitor">
+    Provides device/client registration and management use cases.
+  </Card>
+  <Card title="BackupModule" icon="archive">
+    Provides multi-platform backup creation and restoration use cases.
+  </Card>
+  <Card title="CellsModule" icon="grid">
+    Provides Wire Cells (file storage) use cases for the current account.
+  </Card>
+</CardGroup>
+
+The remaining modules follow the same structure:
+`ChannelsModule`, `ConnectionModule`, `DebugModule`, `SearchModule`,
+`ServicesModule`, `TeamModule`.
+
+### Example: ConversationModule pattern
+
+```kotlin
+@Module
+@InstallIn(ViewModelComponent::class)
+class ConversationModule {
+
+    // Resolve the scope once — all other providers reuse it
+    @ViewModelScoped
+    @Provides
+    fun provideConversationScope(
+        @KaliumCoreLogic coreLogic: CoreLogic,
+        @CurrentAccount currentAccount: UserId,
+    ): ConversationScope = coreLogic.getSessionScope(currentAccount).conversations
+
+    // Individual use cases delegate to the scope
+    @ViewModelScoped
+    @Provides
+    fun provideObserveConversationListDetails(
+        conversationScope: ConversationScope,
+    ): ObserveConversationListDetailsUseCase =
+        conversationScope.observeConversationListDetails
+
+    @ViewModelScoped
+    @Provides
+    fun provideCreateRegularGroupUseCase(
+        conversationScope: ConversationScope,
+    ): CreateRegularGroupUseCase = conversationScope.createRegularGroup
+}
+```
+
+## Service-scoped dependencies
+
+`ServiceModule` (in `CoreLogicModule.kt`) provides dependencies scoped to
+Android `Service` components — specifically the persistent WebSocket service:
+
+```kotlin
+@Module
+@InstallIn(ServiceComponent::class)
+class ServiceModule {
+
+    @ServiceScoped
+    @Provides
+    @CurrentSessionFlowService
+    fun provideCurrentSessionFlowUseCase(
+        @KaliumCoreLogic coreLogic: CoreLogic,
+    ) = coreLogic.getGlobalScope().session.currentSessionFlow
+}
+```
+
+## Qualifier annotations
+
+Several custom `@Qualifier` annotations prevent ambiguous injection:
+
+| Qualifier | Purpose |
+|---|---|
+| `@KaliumCoreLogic` | Disambiguates the production `CoreLogic` from test doubles |
+| `@CurrentAccount` | Marks the `UserId` of the currently active session |
+| `@CurrentSessionFlowService` | Session flow use case when injected into a `Service` |
+| `@NoSession` | `QualifiedIdMapper` that works without an active session |
+| `@DefaultWebSocketEnabledByDefault` | Boolean flag for WebSocket default state |
+| `@CurrentAppVersion` | `Int` holding `BuildConfig.VERSION_CODE` |
+
+## ViewModelScoped utilities
+
+`app/di/ViewModelScoped.kt` provides helpers for sub-screen ViewModels that
+survive recomposition using the [Resaca](https://github.com/sebaslogen/resaca)
+library:
+
+```kotlin
+// In a composable — creates a ViewModel scoped to the composable's lifecycle,
+// not the full navigation back-stack entry
+@Composable
+fun SomeSubScreen() {
+    val viewModel = hiltViewModelScoped<MyViewModel, MyViewModelInterface, MyArgs>(
+        arguments = MyArgs(conversationId = id)
+    )
+    // ...
+}
+```
+
+`ScopedArgs` is a marker interface that provides a `key` property used to
+cache separate ViewModel instances per unique argument set. This is how
+`ConversationListViewModel` maintains independent state for each
+`ConversationsSource` (all conversations, archive, search) displayed within
+the same screen hierarchy.
+
+## KSP and the Hilt convention plugin
+
+The `wire.hilt` convention plugin (`build-logic/plugins/HiltConventionPlugin.kt`)
+standardises Hilt adoption across modules:
+
+```kotlin
+class HiltConventionPlugin : Plugin<Project> {
+    override fun apply(target: Project) = with(target) {
+        pluginManager.apply("dagger.hilt.android.plugin")
+        pluginManager.apply("com.google.devtools.ksp")
+
+        dependencies {
+            add("implementation", findLibrary("hilt.android"))
+            add("ksp", findLibrary("hilt.compiler"))          // KSP — not KAPT
+            add("kspAndroidTest", findLibrary("hilt.compiler"))
+            add("androidTestImplementation", findLibrary("hilt.test"))
+        }
+    }
+}
+```
+
+Applying this plugin to a module's `build.gradle.kts` is all that is needed to
+enable Hilt and KSP-based code generation in that module:
+
+```kotlin
+// feature/cells/build.gradle.kts
+plugins {
+    alias(libs.plugins.wire.android.library)
+    alias(libs.plugins.wire.hilt)
+}
+```

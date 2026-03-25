@@ -1,0 +1,172 @@
+---
+title: Enterprise Mobility Management (EMM)
+description: Configure Wire Android remotely using Android managed configurations for enterprise deployments.
+---
+
+Enterprise Mobility Management (EMM) support allows IT administrators to configure Wire Android remotely through their Mobile Device Management (MDM) console without requiring users to manually enter setup information. Wire reads managed configurations pushed by the EMM solution and applies them automatically on app start, resume, or when configurations change.
+
+<Info>
+EMM support is controlled by the `emm_support_enabled` build flag in `default.json`. It is enabled by default (`true`) in production builds.
+</Info>
+
+## What EMM enables
+
+<CardGroup cols={2}>
+  <Card title="Backend pre-configuration" icon="server">
+    Push a default backend URL so users connect to your on-premises or custom Wire server without manual setup.
+  </Card>
+  <Card title="SSO pre-configuration" icon="key">
+    Supply a default SSO code so users are taken directly to your identity provider login without entering a code.
+  </Card>
+  <Card title="Persistent WebSocket" icon="plug">
+    Enforce a persistent WebSocket connection for all accounts, ensuring reliable push delivery in managed environments.
+  </Card>
+  <Card title="Feedback reporting" icon="chart-bar">
+    Configuration application status (success or error) is reported back to the MDM console via Android Keyed App States.
+  </Card>
+</CardGroup>
+
+## Configuration flow
+
+Wire evaluates managed configurations at three distinct moments:
+
+1. **App start** — `ManagedConfigurationsManager` is initialised and reads the current restrictions from Android's `RestrictionsManager`.
+2. **App resume** — Configurations are re-read in case the MDM console pushed an update while the app was in the background.
+3. **Broadcast receiver triggered** — The OS broadcasts `ACTION_APPLICATION_RESTRICTIONS_CHANGED` whenever the MDM console changes a restriction. `ManagedConfigurationsReceiver` catches this intent and refreshes all configurations immediately.
+
+The resolution logic for each configuration key follows this precedence:
+
+| Situation | Result |
+|---|---|
+| Valid managed config found | Used as the default for ViewModels via DI |
+| Config present but invalid | Falls back to `default.json` app defaults |
+| No managed config set | Falls back to `default.json` app defaults |
+
+ViewModels inject values from `ManagedConfigurationsManager` rather than reading `default.json` directly, so they always receive whichever value is currently active.
+
+## AndroidManifest changes
+
+EMM support requires a `<meta-data>` element at the application level pointing to the managed configuration schema:
+
+```xml
+<meta-data
+    android:name="android.content.APP_RESTRICTIONS"
+    android:resource="@xml/app_restrictions" />
+```
+
+This schema file (`res/xml/app_restrictions.xml`) declares the supported restriction keys so that EMM consoles can display them in their UI.
+
+## Managed configuration keys
+
+All keys are declared in `ManagedConfigurationsKeys` and exposed through `res/xml/app_restrictions.xml`.
+
+### `default_server_urls` (string)
+
+A JSON string describing the Wire backend endpoints the app should connect to by default.
+
+**Unified format** — a single configuration object:
+
+```json
+{
+  "title": "Acme Wire Server",
+  "endpoints": {
+    "backendURL": "https://wire.example.com",
+    "backendWSURL": "https://wire-ws.example.com",
+    "accountsURL": "https://accounts.example.com",
+    "teamsURL": "https://teams.example.com",
+    "blackListURL": "https://clientblacklist.example.com",
+    "websiteURL": "https://example.com"
+  }
+}
+```
+
+**Context-mapped format** — multiple configurations keyed by Android user ID. This supports work-profile deployments where the personal profile and work profile should connect to different backends:
+
+```json
+{
+  "0": {
+    "title": "Personal Server",
+    "endpoints": { "backendURL": "https://wire.example.com", "..." : "..." }
+  },
+  "10": {
+    "title": "Work Server",
+    "endpoints": { "backendURL": "https://wire-work.example.com", "..." : "..." }
+  },
+  "default": {
+    "title": "Fallback Server",
+    "endpoints": { "backendURL": "https://wire-fallback.example.com", "..." : "..." }
+  }
+}
+```
+
+The parser (`ManagedConfigParser`) detects which format is in use automatically. For context-mapped format, it resolves the configuration for the current Android user ID (calculated as `Process.myUid() / 100000`), falling back to the `"default"` key if the specific user ID is not present.
+
+All six endpoint URLs are validated with `isValidWebUrl()`. If any URL is invalid the configuration is rejected and app defaults are used.
+
+### `sso_code` (string)
+
+A JSON string containing a UUID that identifies the enterprise SSO configuration on the Wire backend:
+
+```json
+{
+  "sso_code": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+The SSO code must be a valid UUID. If it is not, the configuration is rejected. Context-mapped format is also supported for SSO codes, using the same user-ID keying scheme as server URLs.
+
+### `keep_websocket_connection` (boolean)
+
+When set to `true`, Wire enforces a persistent WebSocket connection for all accounts and prevents users from changing this setting. Defaults to `false`.
+
+When MDM enforcement switches from `false` to `true`, Wire immediately enables persistent WebSocket for all existing accounts and starts the foreground service.
+
+## Build flag: `emm_support_enabled`
+
+`emm_support_enabled` in `default.json` controls whether the EMM subsystem is active at all. When `false`, `ManagedConfigurationsManager` is not initialised and managed configurations are not read.
+
+```json
+{
+  "emm_support_enabled": true
+}
+```
+
+## Build flags: `team_app_lock` and `team_app_lock_timeout`
+
+These flags configure the app-lock feature for team deployments:
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `team_app_lock` | boolean | `false` | When `true`, the app lock is enforced and users cannot disable it. |
+| `team_app_lock_timeout` | integer | `60` | The number of seconds of inactivity after which the app lock activates. |
+
+```json
+{
+  "team_app_lock": true,
+  "team_app_lock_timeout": 60
+}
+```
+
+<Warning>
+When `team_app_lock` is `true`, users cannot disable the app lock from within the app settings. This is enforced at the UI level.
+</Warning>
+
+## Feedback reporting
+
+After each configuration refresh the result is reported back to the MDM console using the Android Enterprise Feedback API (`KeyedAppStatesReporter`). This allows administrators to see in their EMM console whether Wire successfully applied the managed configuration or encountered an error.
+
+Each configuration key reports one of:
+- **Info severity** — configuration was applied or was cleared.
+- **Error severity** — the configuration value was present but invalid (e.g., malformed JSON or an invalid URL).
+
+## Key classes
+
+| Class | Location | Responsibility |
+|---|---|---|
+| `ManagedConfigurationsManager` | `emm/` | Central coordinator; holds current resolved config; calls `RestrictionsManager` |
+| `ManagedConfigurationsReceiver` | `emm/` | `BroadcastReceiver` for `ACTION_APPLICATION_RESTRICTIONS_CHANGED`; triggers refresh |
+| `ManagedConfigParser` | `emm/` | Parses unified and context-mapped JSON formats |
+| `AndroidUserContextProvider` | `emm/` | Resolves the current Android user ID for context-mapped configs |
+| `ManagedConfigurationsReporter` | `emm/` | Sends Keyed App States feedback to the MDM console |
+| `ManagedServerConfig` | `emm/` | Data class for the server endpoint configuration |
+| `ManagedSSOCodeConfig` | `emm/` | Data class for the SSO code configuration |

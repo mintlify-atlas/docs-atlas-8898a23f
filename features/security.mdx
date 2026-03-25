@@ -1,0 +1,149 @@
+---
+title: "Security"
+description: "End-to-end encryption, certificate pinning, app lock, and data protection features in Wire Android."
+---
+
+Wire Android is built around strong security principles. All messages and calls are end-to-end encrypted, and the app provides additional layers of protection including certificate pinning, app lock, biometric authentication, and automated data wipe policies.
+
+## End-to-End Encryption
+
+Wire Android supports two end-to-end encryption protocols:
+
+<CardGroup cols={2}>
+  <Card title="MLS (Messaging Layer Security)" icon="lock">
+    The modern group messaging protocol. MLS uses a tree-based key structure that enables efficient key updates and forward secrecy in large groups.
+  </Card>
+  <Card title="Proteus" icon="shield">
+    Wire's existing protocol based on the Signal double-ratchet algorithm. All 1:1 and legacy group conversations use Proteus.
+  </Card>
+</CardGroup>
+
+Both protocols are implemented in [Kalium](https://github.com/wireapp/kalium), the Wire multiplatform SDK that underlies Wire Android. The active protocol for a given conversation is shown in the conversation details and in the calling top bar via verification status icons.
+
+### MLS Verification
+
+Conversations using MLS show a verification status (`NOT_VERIFIED`, `VERIFIED`, or `DEGRADED`). The status is surfaced throughout the UI — in the conversation top bar, in call screens, and in message details.
+
+### MLS Keypackage Management
+
+Keypackages are cryptographic credentials that allow other clients to initiate an MLS conversation with a user. The app periodically checks keypackage availability and uploads new ones when the supply runs low.
+
+The `lower_keypackage_limit` flag (default: `false`) can be set to `true` to reduce the minimum keypackage threshold. This is intended for environments with constrained backend storage.
+
+### MLS Reset
+
+The `is_mls_reset_enabled` flag (default: `true`) controls whether users can trigger an MLS state reset to recover from corrupted MLS state.
+
+## Certificate Pinning
+
+The production build of Wire Android pins TLS certificates for Wire's backend infrastructure. The pinning configuration is defined in `default.json`:
+
+```json
+"cert_pinning_config": {
+    "sha256/fnBeCwh0imI9t46Onid49IwvsB5vcf7RCvafRRdCyRE=": [
+        "**.prod-nginz-https.wire.com",
+        "**.prod-nginz-ssl.wire.com",
+        "**.prod-assets.wire.com",
+        "clientblacklist.wire.com"
+    ]
+}
+```
+
+The pin is a SHA-256 digest of the public key. Any connection to the listed hosts that does not match the pinned certificate is rejected, protecting against man-in-the-middle attacks even when the device's certificate store is compromised.
+
+<Warning>
+`ignore_ssl_certificates` is `false` in all production builds. It can only be enabled in the `dev` flavor for local testing against self-signed backend certificates.
+</Warning>
+
+## Configuration Signature Enforcement
+
+The `enforce_configuration_signature` flag (default: `true` in prod, staging, beta, internal, and fdroid; `false` in dev) requires that the custom configuration file delivered to the app is signed with a known key.
+
+Valid public keys are listed in `configuration_signature_keys`:
+
+```json
+"configuration_signature_keys": [
+    "MCowBQYDK2VwAyEAFbodixhcegKs4NkpPjjzJYHAxKLlye04SuZ2JNJ9RCc=",
+    "MCowBQYDK2VwAyEAkAH9FXpKfjp1PX0HeVo5JeYi6h/zDUNwkURIuEZ+7FY="
+]
+```
+
+When enforcement is enabled, the app rejects unsigned or incorrectly signed configuration files at startup.
+
+## App Lock
+
+App lock requires users to authenticate before accessing the app after it has been in the background for a configurable period.
+
+### Configuration
+
+| Setting | Default | Description |
+|---|---|---|
+| `team_app_lock` | `false` | Whether app lock is enforced by the team admin |
+| `team_app_lock_timeout` | `60` (seconds) | Inactivity timeout before the lock is applied |
+
+The lock timeout countdown begins when the app moves to the background. If the user returns before the timeout expires, the app remains unlocked. If the timeout has elapsed by the time the app is foregrounded, the lock screen is shown.
+
+<Note>
+The `LockCodeTimeManager` handles lock state transitions. It correctly accounts for the case where the app is foregrounded after the timeout has already expired in the background.
+</Note>
+
+### Lock Screen Options
+
+Users set a passcode when enabling app lock. The unlock screen supports two methods:
+
+<Tabs>
+  <Tab title="Passcode">
+    The user enters the passcode they configured during setup. After too many failed attempts, a lockout is triggered.
+  </Tab>
+  <Tab title="Biometric Authentication">
+    Fingerprint or face unlock via `BiometricManager.Authenticators.BIOMETRIC_STRONG`. If biometric authentication fails or is unavailable, the passcode fallback is offered automatically via the "Use Passcode" button in the system prompt.
+  </Tab>
+</Tabs>
+
+Biometric authentication uses the Android `BiometricPrompt` API. The prompt is configured with `setConfirmationRequired(false)` so a single biometric gesture is sufficient.
+
+## Sensitive Data Policies
+
+### Wipe on Cookie Invalid
+
+```json
+"wipe_on_cookie_invalid": false
+```
+
+When set to `true`, all local app data is wiped if the server reports that the session cookie is no longer valid (e.g., after a forced logout by an admin).
+
+### Wipe on Device Removal
+
+```json
+"wipe_on_device_removal": false
+```
+
+When set to `true`, all local app data is wiped when the current device is removed from the account's device list by another session.
+
+### Wipe on Rooted Device
+
+```json
+"wipe_on_rooted_device": false
+```
+
+When set to `true`, the app detects if the device is rooted and wipes all local data to prevent potential extraction of encryption keys or message content from an untrustworthy environment.
+
+<Warning>
+All three wipe options default to `false`. Enterprise deployments that require strict data hygiene should evaluate enabling these flags.
+</Warning>
+
+## No Sensitive Data in Logs
+
+Wire Android follows a strict logging policy:
+
+- Message content is never written to logs.
+- Encryption keys are never written to logs.
+- Unique user identifiers are obfuscated before being logged.
+
+Logging is disabled entirely in the `prod` and `fdroid` builds (`logging_enabled: false`). In other builds, logs are available for developer analysis but are still subject to the above restrictions.
+
+Users on production builds can voluntarily enable local logging from within the app settings. These logs remain on-device and are not uploaded automatically — users must manually export and share them.
+
+## E2EI (End-to-End Identity)
+
+The `OAuthUseCase` in `com.wire.android.feature.e2ei` implements an OAuth flow used during end-to-end identity certificate enrollment. E2EI allows clients to cryptographically bind their MLS identity to an external identity provider (IdP), enabling verifiable user identity within encrypted conversations.

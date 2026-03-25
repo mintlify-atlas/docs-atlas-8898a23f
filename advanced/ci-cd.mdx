@@ -1,0 +1,221 @@
+---
+title: CI/CD
+description: Jenkins pipeline, GitHub Actions workflows, Docker build agents, code coverage, and automated processes used in Wire Android's continuous integration and delivery system.
+---
+
+## Overview
+
+Wire Android uses a two-layer CI/CD system:
+
+1. **GitHub Actions** — primary CI for all builds, tests, linting, and releases.
+2. **Jenkins** — secondary layer that gates PR merges by waiting for GitHub Actions to complete and then triggering downstream QA acceptance tests.
+
+Docker provides a reproducible local build environment mirroring the CI setup.
+
+## GitHub Actions Workflows
+
+All workflows live under `.github/workflows/`. The architecture is built around a central reusable workflow (`build-unified.yml`) called by branch- and tag-specific trigger workflows.
+
+### Reusable core: `build-unified.yml`
+
+The unified workflow orchestrates the full pipeline for every build. It accepts a JSON `build-config` matrix describing which flavor/variant combinations to build and where to deploy them.
+
+**Pipeline stages (in order):**
+
+<Steps>
+  <Step title="Lint">
+    Runs Android Lint (`./gradlew lint`) on a `buildjet-8vcpu-ubuntu-2204` runner with a 6 GB JVM heap. Lint on release builds is explicitly disabled (`checkReleaseBuilds = false`) to reduce build time.
+  </Step>
+  <Step title="Style">
+    Runs Detekt static analysis (`./gradlew detektAll`) for code style enforcement.
+  </Step>
+  <Step title="UI Tests">
+    Delegates to `gradle-run-ui-tests.yml` (screenshot and instrumented UI tests).
+  </Step>
+  <Step title="Unit Tests">
+    Delegates to `gradle-run-unit-tests.yml`. Runs `./gradlew testCoverage` and uploads the Kover XML report to Codecov.
+  </Step>
+  <Step title="Build">
+    Only starts after all four quality gates pass. Runs as a matrix job — each entry in `build-config` becomes a parallel build. Produces APKs, AABs, or both depending on `build-type`. Also generates an SBOM artifact.
+  </Step>
+  <Step title="Deploy">
+    Conditional job (only when `enable-deployment: true`). Uploads artifacts to S3, Google Play, and/or as GitHub Release assets based on `deployment-targets` in the build config.
+  </Step>
+</Steps>
+
+### Branch and tag trigger workflows
+
+| Workflow | Trigger | Flavor | Variant | Keystore | Deploy targets |
+|---|---|---|---|---|---|
+| `build-develop-pr.yml` | PR → `develop`, merge queue | Dev | Debug | debug | S3 |
+| `build-develop-push.yml` | Push → `develop` | Internal | Compat | internal | S3, Google Play (internal track) |
+| `build-main-pr.yml` | PR → `main` | Dev | Debug | debug | S3 |
+| `build-main-push.yml` | Push → `main` | Beta | Release | prerelease | S3, Google Play (beta track) |
+| `build-release-candidate-pr.yml` | PR → `release/candidate` | Dev | Debug | debug | S3 |
+| `build-release-candidate-push.yml` | Push → `release/candidate` | Staging | Compat | internal | S3, Google Play (staging track) |
+| `build-rc.yml` | Tag `v*.*.*-rc.*` | Prod | Compatrelease | public | S3, GitHub Release |
+| `build-production.yml` | GitHub Release published | Prod + Fdroid | Compatrelease | public | S3, Google Play (prod track), GitHub Release |
+
+### Production release validation
+
+The `build-production.yml` workflow includes a `validate-release` job that compares the new release tag against the latest existing GitHub release. It rejects the workflow if the new tag is semantically lower than the current latest release, preventing accidental downgrade deployments.
+
+### Release candidate workflow
+
+`build-rc.yml` triggers on tags matching `v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+`. It:
+
+1. Validates that the RC tag base version is not lower than the latest production release.
+2. Validates that the `PROD_APP_RC_TRACK` repository variable is configured.
+3. Creates a GitHub pre-release.
+4. Builds `ProdCompatrelease` (APK + AAB) and uploads to S3 and the GitHub pre-release.
+
+### Additional automation workflows
+
+| Workflow | Purpose |
+|---|---|
+| `generate-changelog.yml` | Runs on version tags (not pre-release). Uses `generate-changelog` npm package to produce a `CHANGELOG.md` from commit history and attaches it to the GitHub release. |
+| `crowdin-source-updater.yml` | Pushes new string resources to Crowdin for translation. |
+| `crowdin-translations-updater.yml` | Pulls completed translations back from Crowdin into the repository. |
+| `semantic-commit-lint.yml` | Enforces semantic commit message format on PRs. |
+| `jira-lint-and-link.yml` | Validates that PRs reference a JIRA issue and links them automatically. |
+| `pr-author-assigner.yml` | Automatically assigns the PR author as a reviewer. |
+| `check-kalium-commitish.yml` | Verifies that the Kalium submodule reference is valid. |
+| `generate-screenshots.yml` | Generates Compose screenshot test reference images. |
+| `qa-android-ui-tests.yml` | Triggers the QA UI acceptance test suite on a device farm. |
+| `stale-issues-and-pr.yml` | Marks and closes stale issues and PRs automatically. |
+| `deploy-adr-docs.yml` | Publishes Architecture Decision Records (ADRs) to documentation. |
+
+## Jenkins Pipeline
+
+The `Jenkinsfile` defines a supplementary pipeline that runs alongside GitHub Actions for PR branches. It is **disabled by default** (`ENABLE_PR_PIPELINE = "false"`) and must be explicitly enabled.
+
+When enabled, the pipeline runs two stages:
+
+<Steps>
+  <Step title="Wait for GitHub Action to finish">
+    Polls the GitHub Actions API every 20 seconds (up to 45 minutes to start, 70 minutes to complete) waiting for the corresponding GitHub Actions workflow run to reach `success`. If the run fails or is cancelled, Jenkins sends a failure notification to a Wire bot channel via the `WIRE_BOT_SECRET` credential.
+
+    The target workflow URL differs based on the PR's target branch:
+    - Targeting `release/candidate` → workflow ID `99460303`
+    - All other branches → workflow ID `98603098`
+  </Step>
+  <Step title="QA Tests">
+    After GitHub Actions succeeds, Jenkins triggers the `android_reloaded_critical_flows` job (a separate QA Jenkins pipeline). It locates the latest staging/compat APK uploaded to S3 by GitHub Actions and passes it to the acceptance test runner with the `@CriticalFlows` tag. Results are reported back to the Wire bot channel.
+  </Step>
+</Steps>
+
+<Info>
+The Jenkins pipeline acts as an orchestration layer for cross-system coordination: it watches GitHub Actions for build completion and then hands off to the QA testing infrastructure (which has its own device farm integration).
+</Info>
+
+## Docker Build Agent
+
+The `docker-agent/` directory provides a containerized build environment for reproducible local builds and can also be used as a Jenkins agent.
+
+### Docker image (`docker-agent/AndroidAgent`)
+
+- **Base image**: `eclipse-temurin:17-jdk-noble` (Ubuntu 24.04 / glibc 2.39)
+- **Android SDK**: `cmdline-tools` (version 11076708), `platform-tools`, `build-tools;35.0.0`, `platforms;android-35`
+- **Android NDK**: `r27b` (required for `core-crypto` native binaries that need glibc 2.38+)
+- **System emulator image**: `system-images;android-35;default;x86_64`
+- **Additional tools**: `git`, `wget`, `unzip`, `ruby`, `bundler`, `docker`
+- **User**: Non-root `android-agent` user (UID/GID 1000)
+
+```bash
+# Build the image
+docker build -t android-agent:latest -f docker-agent/AndroidAgent .
+
+# Verify glibc version
+docker run --rm android-agent:latest ldd --version | head -1
+# Should show: GLIBC 2.39
+```
+
+### Running a local build (`docker-compose.yml`)
+
+The `docker-compose.yml` mounts the project directory into the container and runs two scripts in sequence:
+
+1. `configure-project.sh` — writes `local.properties` with `sdk.dir` and `android.ndkPath` pointing to the in-container SDK/NDK paths.
+2. `builder.sh` — conditionally runs static analysis, unit tests, acceptance tests, and the Gradle `assemble` task based on environment variables.
+
+```bash
+# Start a containerized build (default: F-Droid Release with tests)
+docker-compose up
+```
+
+Key environment variables for `docker-compose.yml`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `CUSTOM_FLAVOR` | `Fdroid` | Product flavor to build |
+| `BUILD_TYPE` | `Release` | Build type |
+| `CLEAN_PROJECT_BEFORE_BUILD` | `true` | Run `./gradlew clean` before building |
+| `RUN_APP_UNIT_TESTS` | `true` | Execute unit tests |
+| `RUN_STATIC_CODE_ANALYSIS` | `true` | Run Detekt / lint |
+| `BUILD_CLIENT` | `true` | Run the assemble task |
+| `SIGN_APK` | (commented out) | Enable APK signing with a provided keystore |
+| `BUILD_WITH_STACKTRACE` | `true` | Pass `--stacktrace` to Gradle |
+
+<Tip>
+Uncomment the `SIGN_APK` variables in `docker-compose.yml` and provide your keystore details to produce a signed APK locally.
+</Tip>
+
+## Code Coverage
+
+Code coverage is collected with [Kover](https://github.com/Kotlin/kotlinx-kover) (Kotlin-native coverage tool) and reported to [Codecov](https://codecov.io/gh/wireapp/wire-android).
+
+### Coverage collection
+
+```bash
+# Run all unit tests and generate the Kover XML report
+./gradlew testCoverage
+
+# Report location: app/build/reports/kover/report.xml
+```
+
+### Codecov configuration (`codecov.yml`)
+
+| Setting | Value |
+|---|---|
+| Project coverage target | `auto` (tracks against base branch) with 2% allowed regression |
+| Patch coverage target | 80% (informational — does not fail the build) |
+| PR comment layout | diff, files, footer |
+| GitHub Checks annotations | Enabled |
+
+**Ignored paths** (excluded from coverage reporting):
+
+- `**/test/**`, `**/androidTest/**` — test source sets
+- `buildSrc/**`, `kalium/**` — build tooling and submodule
+- `**/_Screen.kt`, `**/mock/**`, `**/theme/**` — UI scaffolding
+- `**/common/**`, `**/navigation/**`, `**/di/**` — infrastructure code
+- `**/*Screen*.kt` — Compose screen entry points
+
+## Pull Request Templates
+
+The PR template at `.github/pull_request_template.md` enforces a consistent submission format for internal contributors.
+
+**Required checklist for PR title:**
+- Follows [semantic commit message](https://sparkbox.com/foundry/semantic_commit_messages) style
+- Contains a JIRA issue reference (e.g. `SQPIT-764`)
+- Answers the question: *If merged, this PR will: ...*
+
+**PR description sections:**
+- **Issues** — what problem is solved
+- **Causes** *(optional)* — root cause analysis
+- **Solutions** — what was implemented
+- **Dependencies** *(optional)* — related PRs that must merge first
+- **Testing** — how the change was tested; checkbox for automated test coverage
+- **Notes** *(optional)* — additional context
+- **Attachments** *(optional)* — before/after screenshots
+
+**Post-merge checklist:**
+- Configuration variables introduced by the PR are documented and reflected in CI jobs.
+
+## Other Automation
+
+| File | Purpose |
+|---|---|
+| `.github/dependabot.yml` | Automated dependency update PRs for Gradle and GitHub Actions |
+| `.github/stale.yml` | Configuration for the stale issue/PR bot |
+| `.github/labels.yml` | Defines GitHub label taxonomy for issues and PRs |
+| `.github/technolinator.yml` | SBOM and license compliance tooling integration |
+| `.github/actions/setup-keystore/` | Composite action that decodes and writes the correct keystore file based on `keystore-type` input |

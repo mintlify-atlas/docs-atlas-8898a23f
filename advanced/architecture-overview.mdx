@@ -1,0 +1,232 @@
+---
+title: Architecture Overview
+description: Multi-module Gradle project structure, clean architecture layers, and key libraries used in Wire Android.
+---
+
+Wire Android is a multi-module Gradle project that separates concerns across an `app` module, shared `core` libraries, and self-contained `features`. The UI layer is built entirely with Jetpack Compose following the MVVM pattern. Protocol-level logic — including end-to-end encryption, API communication, and session management — is delegated to [Kalium](https://github.com/wireapp/kalium), a Kotlin Multiplatform library included as a Git submodule.
+
+## Module structure
+
+```
+wire-android/
+├── app/                   # Main application module
+├── core/
+│   ├── analytics/         # Analytics abstraction (enabled/disabled variants)
+│   ├── analytics-enabled/ # Analytics-enabled implementation
+│   ├── analytics-disabled/# No-op analytics implementation
+│   ├── di/                # Shared DI utilities
+│   ├── media/             # Media playback and capture helpers
+│   ├── navigation/        # Navigation wrappers (TabletDialogWrapper, etc.)
+│   ├── notification/      # Notification infrastructure
+│   ├── ui-common/         # Shared Compose components (Android)
+│   └── ui-common-kmp/     # Shared Compose components (KMP)
+├── features/
+│   ├── cells/             # Wire Cells (file storage)
+│   ├── meetings/          # Meetings / scheduling
+│   ├── sketch/            # Drawing canvas
+│   ├── sync/              # Background sync feature
+│   └── template/          # Scaffolding for new feature modules
+├── kalium/                # Git submodule — Kotlin Multiplatform core library
+├── build-logic/           # Gradle convention plugins
+└── buildSrc/              # Build-time constants and version catalog helpers
+```
+
+<CardGroup cols={2}>
+  <Card title="app" icon="mobile">
+    Entry point of the Android application. Contains `WireApplication`, all screen
+    composables, ViewModels, navigation graph definition, and the top-level DI setup.
+  </Card>
+  <Card title="core/*" icon="cube">
+    Reusable modules consumed by both `app` and `features`. Each module has a
+    single responsibility (analytics, media, navigation wrappers, notifications,
+    shared UI components).
+  </Card>
+  <Card title="features/*" icon="puzzle-piece">
+    Independently developed feature modules (cells, meetings, sketch, sync).
+    Each module owns its own UI, ViewModels, and navigation destinations.
+  </Card>
+  <Card title="kalium" icon="shield">
+    Kotlin Multiplatform library providing all protocol logic: MLS and Proteus
+    encryption, API client, session management, and use-case definitions.
+  </Card>
+</CardGroup>
+
+## Clean architecture layers
+
+Wire Android follows clean architecture with a strict dependency direction:
+
+```
+UI (Compose) → ViewModel → UseCase (Kalium) → Repository (Kalium)
+```
+
+<Steps>
+  <Step title="UI layer — Jetpack Compose">
+    All screens are `@Composable` functions. They observe `StateFlow`s exposed by
+    their corresponding `ViewModel` and dispatch events via method calls or
+    `Channel`s. No business logic lives in composables.
+  </Step>
+  <Step title="ViewModel layer">
+    Each screen has a Hilt-injected `ViewModel` (or a `@ViewModelScoped` variant
+    for sub-screens). ViewModels call use-case lambdas/functions provided by
+    Kalium and transform results into UI state.
+  </Step>
+  <Step title="UseCase layer — Kalium">
+    Kalium exposes plain Kotlin callable objects (use cases) through scoped
+    containers (`GlobalScope`, `SessionScope`, sub-scopes such as
+    `ConversationScope`, `CallsScope`). They encapsulate all business and
+    protocol logic.
+  </Step>
+  <Step title="Repository / data layer — Kalium">
+    Kalium repositories own persistence (SQLite via SQLDelight), network calls
+    (Ktor), and local caches. The Android app never touches these layers
+    directly.
+  </Step>
+</Steps>
+
+<Note>
+  The Android codebase **never imports Kalium repository or data-source
+  classes directly**. All access goes through the use-case objects vended by
+  `CoreLogic.getGlobalScope()` or `CoreLogic.getSessionScope(userId)`.
+</Note>
+
+## Kalium submodule
+
+Kalium is included under `kalium/` as a Git submodule. After cloning the
+repository you must initialise it:
+
+```bash
+git submodule update --init --recursive
+```
+
+Kalium provides:
+
+- **MLS** (Messaging Layer Security) and **Proteus** end-to-end encryption
+- Wire API client (Ktor-based)
+- `CoreLogic` — the single entry point used by the Android app
+- `GlobalScope` — session-independent use cases (login, account list, server config)
+- `SessionScope` — per-user use cases (messaging, calls, files, sync)
+
+<Warning>
+  The `kalium/local.properties` file is **not** created automatically by Android
+  Studio. Copy the root `local.properties` (which sets `sdk.dir`) to
+  `kalium/local.properties` before building.
+</Warning>
+
+## MVVM with Jetpack Compose
+
+Each screen follows this pattern:
+
+```kotlin
+// ViewModel exposes immutable state
+@HiltViewModel
+class ConversationListViewModel @Inject constructor(
+    private val observeConversations: ObserveConversationListDetailsUseCase,
+) : ViewModel() {
+
+    var state by mutableStateOf(ConversationListState())
+        private set
+
+    init {
+        viewModelScope.launch {
+            observeConversations().collect { conversations ->
+                state = state.copy(conversations = conversations)
+            }
+        }
+    }
+}
+
+// Composable observes state
+@Composable
+fun ConversationListScreen(
+    viewModel: ConversationListViewModel = hiltViewModel()
+) {
+    val state = viewModel.state
+    ConversationListContent(conversations = state.conversations)
+}
+```
+
+### AssistedInject for parameterised ViewModels
+
+ViewModels that require runtime arguments (e.g. a specific `ConversationsSource`
+or a search query `Flow`) use Hilt's `AssistedInject`. This avoids passing data
+through `LaunchedEffect` calls and makes each ViewModel dedicated to exactly one
+configuration, which simplifies testing and debugging (see ADR-0005).
+
+```kotlin
+@HiltViewModel(assistedFactory = ConversationListViewModel.Factory::class)
+class ConversationListViewModel @AssistedInject constructor(
+    @Assisted val source: ConversationsSource,
+    @Assisted val searchQuery: Flow<String>,
+    private val observeConversations: ObserveConversationListDetailsUseCase,
+) : ViewModel(), ConversationListViewModelInterface {
+
+    @AssistedFactory
+    interface Factory {
+        fun create(source: ConversationsSource, searchQuery: Flow<String>): ConversationListViewModel
+    }
+}
+```
+
+## Calling architecture
+
+Calling uses two separate Activities to isolate disposable incoming/outgoing call
+UI from the long-lived ongoing call UI (ADR-0002):
+
+| Activity | Purpose |
+|---|---|
+| `StartingActivity` | Handles incoming and outgoing call UI. Disposable — recreated for each new call. |
+| `OngoingCallActivity` | Handles the ongoing call. Kept alive for the full call duration. |
+
+## Build system
+
+### build-logic — convention plugins
+
+Reusable Gradle plugins live in `build-logic/plugins/`. Modules apply them by
+id instead of copy-pasting configuration:
+
+| Plugin | Effect |
+|---|---|
+| `wire.android.library` | Android library defaults (compile SDK, Java 17, etc.) |
+| `wire.android.application` | Android application defaults + APK renaming |
+| `wire.hilt` | Applies `dagger.hilt.android.plugin` + `com.google.devtools.ksp`, adds Hilt/KSP dependencies |
+| `wire.android.navigation` | Adds `core:navigation` + Compose Destinations + KSP |
+| `wire.kmp.library` | Kotlin Multiplatform library defaults |
+
+### buildSrc — build-time constants
+
+`buildSrc/` provides Kotlin objects consumed during configuration time:
+
+- `BuildTypes` — debug / release build type names
+- `Dependencies` — shared dependency version strings (before the version
+  catalog covers everything)
+- `flavor/` — app flavour definitions (Dev, Staging, Internal, Beta, Prod,
+  F-Droid)
+- Custom Gradle tasks (`IncludeGitBuildTask`, `WriteKeyValuesToFileTask`,
+  `RenameApkTask`)
+
+### KSP for annotation processing
+
+All annotation processing — Hilt code generation and Compose Destinations
+destination/nav-graph generation — uses **KSP** (Kotlin Symbol Processing)
+rather than KAPT, giving faster incremental builds.
+
+## App flavours
+
+<CardGroup cols={2}>
+  <Card title="Dev (red)" icon="flask">
+    Bleeding-edge builds targeting the Wire Staging backend. All experimental
+    features enabled. Logging on.
+  </Card>
+  <Card title="Staging (orange)" icon="vial">
+    Release-like builds for QA against the Staging backend. Includes extra dev
+    tools. Logging on.
+  </Card>
+  <Card title="Beta (blue)" icon="users">
+    Internal dogfood builds targeting Wire Prod. Some pre-release features.
+    Logging on.
+  </Card>
+  <Card title="Prod / F-Droid (white)" icon="store">
+    Public production builds. Logging is disabled by default and never uploaded.
+    F-Droid variant contains no closed-source dependencies.
+  </Card>
+</CardGroup>

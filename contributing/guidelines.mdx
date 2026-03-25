@@ -1,0 +1,131 @@
+---
+title: 'Contribution guidelines'
+description: 'How to contribute bug fixes and code improvements to Wire Android.'
+---
+
+Wire Android is an open-source project and welcomes contributions from the community. This page explains what kinds of contributions are accepted, how to set up your environment, and what to include in a pull request.
+
+<Warning>
+Wire accepts **only bug fixes and code improvements**. New features, UI changes, and UX changes are decided and built by the Wire development team and cannot be accepted from external contributors.
+</Warning>
+
+## Contributor Agreement
+
+Before submitting your first pull request, you must sign the [Wire Contributor Agreement](https://github.com/wireapp/wire/raw/master/assets/Wire%20Contributor%20Agreement.pdf).
+
+You can sign it electronically when you open your first pull request by filling in the required information in the PR description. You do not need to sign it again for subsequent pull requests from the same GitHub account.
+
+## Reporting bugs
+
+If you find a bug, you can report it through one of two channels:
+
+- **Support portal**: Submit a ticket at [support.wire.com](https://support.wire.com). The Wire team will keep you informed about progress.
+- **GitHub Issues**: File an issue at [github.com/wireapp/wire/issues](https://github.com/wireapp/wire/issues). Include as much detail as possible to help the team reproduce the problem.
+
+## Opening a pull request
+
+When your change is ready, follow these requirements before submitting:
+
+<Steps>
+  <Step title="Fill in the pull request template">
+    Complete the PR template to the fullest extent possible. This helps the Wire team understand the proposed changes quickly.
+  </Step>
+  <Step title="Run tests and linters">
+    All tests and linters must pass before submitting. See the [Testing](/contributing/testing) page for the relevant Gradle tasks.
+  </Step>
+  <Step title="Add tests for your changes">
+    Include tests that cover the behaviour introduced or fixed by your change. This helps ensure the changes work as expected and do not regress.
+  </Step>
+</Steps>
+
+<Note>
+All pull requests are reviewed by the `@wireapp/android` team, who are the code owners for this repository.
+</Note>
+
+## Code style
+
+Wire Android uses [Detekt](https://detekt.dev/) for static analysis and code style enforcement. The pre-commit hook in `.githooks/pre-commit` runs `./gradlew detektAll` automatically before each commit.
+
+You can also run it manually at any time:
+
+```bash
+./gradlew detektAll
+```
+
+You can also run the full static analysis suite:
+
+```bash
+./gradlew staticCodeAnalysis
+```
+
+## Pre-commit hooks
+
+The project uses [pre-commit](https://pre-commit.com/) to enforce code quality checks on every commit. The configuration is in `.pre-commit-config.yaml`.
+
+The following hooks run on `pre-commit`:
+
+| Hook | Purpose |
+|------|---------|
+| `check-added-large-files` | Prevents accidentally committing large binary files |
+| `check-case-conflict` | Catches filename case conflicts |
+| `check-merge-conflict` | Detects unresolved merge conflict markers |
+| `check-executables-have-shebangs` | Ensures shell scripts have shebangs |
+| `check-json` | Validates JSON files |
+| `check-toml` | Validates TOML files |
+| `check-yaml` | Validates YAML files |
+| `mixed-line-ending` | Flags mixed line endings |
+| `end-of-file-fixer` | Ensures files end with a newline |
+| `trailing-whitespace` | Removes trailing whitespace |
+| `shellcheck` | Lints shell scripts |
+
+On `commit-msg`, the `conventional-pre-commit` hook enforces [Conventional Commits](https://www.conventionalcommits.org/) format. Accepted commit types are:
+
+```
+chore, build, refactor, fix, feat, test, ci, docs, wip, release
+```
+
+### Installing pre-commit hooks
+
+<Steps>
+  <Step title="Install pre-commit">
+    ```bash
+    pip install pre-commit
+    ```
+  </Step>
+  <Step title="Install the hooks">
+    Run this from the repository root:
+
+    ```bash
+    pre-commit install
+    ```
+
+    This installs both the `pre-commit` and `commit-msg` hook types as defined in `.pre-commit-config.yaml`.
+  </Step>
+</Steps>
+
+## Git hooks (optional)
+
+The repository also ships an optional Git hook in `.githooks/pre-commit` that runs `./gradlew detektAll` before each commit. This is separate from the pre-commit framework hooks above.
+
+To enable it:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+<Tip>
+This hook is optional. If you prefer faster commits during active development, you can skip it and rely on CI to catch Detekt issues.
+</Tip>
+
+## Commit message convention
+
+Commit messages must follow the Conventional Commits specification. The `commit-msg` hook enforces this automatically once pre-commit is installed.
+
+Examples of valid commit messages:
+
+```
+fix: prevent crash when opening empty conversation
+refactor: extract message mapper into separate class
+test: add unit tests for MessageRepository
+docs: update contribution guidelines
+```

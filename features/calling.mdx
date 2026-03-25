@@ -1,0 +1,127 @@
+---
+title: "Calling"
+description: "Voice and video calling features in Wire Android, including group calls, picture-in-picture, and in-call reactions."
+---
+
+Wire Android supports end-to-end encrypted voice and video calls for both 1:1 conversations and group conversations. Calls are powered by the Wire AVS (Audio-Video Signaling) library.
+
+## AVS Library
+
+<Note>
+The open-source build of Wire Android links against the **open-source AVS library**. The binary available on the Google Play Store links against a version of AVS that includes proprietary improvements for call quality. See the [README](https://github.com/wireapp/wire-android) for details.
+</Note>
+
+## Call Types
+
+<CardGroup cols={2}>
+  <Card title="1:1 Voice Call" icon="phone">
+    Encrypted audio call between two users. Initiated from a direct conversation.
+  </Card>
+  <Card title="1:1 Video Call" icon="video">
+    Encrypted video call between two users with front/back camera switching.
+  </Card>
+  <Card title="Group Voice Call" icon="users">
+    Conference call across a group conversation with multiple participants.
+  </Card>
+  <Card title="Group Video Call" icon="video">
+    Multi-party video call with a participant grid view and fullscreen support.
+  </Card>
+</CardGroup>
+
+## Incoming Calls
+
+When a call arrives, a full-screen incoming call screen is displayed showing:
+
+- Caller name and avatar (1:1 calls)
+- Group conversation name and the name of who initiated the call (group calls)
+- **Accept** and **Decline** buttons
+- Options to toggle microphone and camera before answering
+
+Answering a call requires the `RECORD_AUDIO` permission. If the permission has been permanently denied, a dialog guides the user to grant it from system settings.
+
+## Ongoing Call Controls
+
+During an active call, the control bar provides:
+
+| Control | Description |
+|---|---|
+| Microphone | Mute / unmute the local microphone |
+| Camera | Enable / disable the local camera |
+| Speaker | Toggle between earpiece, speakerphone, and connected audio devices |
+| In-call reactions | Open the emoji reaction panel (when enabled) |
+| Hang up | End the call |
+
+### Constant Bitrate (CBR)
+
+When `force_constant_bitrate_calls` is `true` (default: `false`), calls use a constant audio bitrate. An indicator is shown in the call top bar when CBR is active. CBR is only available for 1:1 calls.
+
+### Fullscreen Participant View
+
+In a multi-participant video call, double-tapping a participant tile promotes it to fullscreen. A toast guides users on this interaction the first time it is available. Tapping the back button or the fullscreen tile returns to the grid view.
+
+Participants with active video are sorted to the top of the grid. When all remote videos are disabled, participants are sorted alphabetically.
+
+## Picture-in-Picture
+
+<Info>
+Picture-in-picture (PiP) support is controlled by the `picture_in_picture_enabled` flag (default: `false`).
+</Info>
+
+When `picture_in_picture_enabled` is `true` and the device supports PiP (Android 8.0+), pressing the home button or back button during an active call enters PiP mode instead of ending the call. The PiP window shows the ongoing video feed and allows the user to continue using other apps.
+
+In PiP mode:
+- The call controls bar is hidden
+- The floating self-user tile is shown when there are multiple participants
+- The app re-enters full call view when the user taps the PiP window
+
+## In-Call Reactions
+
+<Info>
+In-call reactions are controlled by the `call_reactions_enabled` flag (default: `true`).
+</Info>
+
+When enabled, a reactions button appears in the call control bar. Tapping it opens a panel of quick-pick emoji. Users can also open a full emoji picker for any emoji.
+
+- Selected emoji float across the call screen as an animation visible to the local user
+- Reactions from remote participants appear as floating emoji overlays attributed to the sender
+- Recent reactions are shown on each participant's video tile
+- The reaction queue holds up to 300 reactions with throttled playback to avoid visual overload
+
+## Meetings
+
+<Info>
+Meetings support is controlled by the `meetings_enabled` flag (default: `false`, enabled in the `dev` flavor).
+</Info>
+
+When `meetings_enabled` is `true`, a meetings entry point is surfaced in the app navigation.
+
+## Audio Device Management
+
+The speaker button cycles through available audio output devices:
+
+- **Earpiece** — default for 1:1 calls
+- **Speakerphone** — built-in loudspeaker
+- **Bluetooth** — headsets and speakers connected via Bluetooth
+
+The app observes speaker state in real time via `ObserveSpeakerUseCase` and reflects changes immediately in the UI.
+
+## Required Android Permissions
+
+The following Android permissions are required for calling features:
+
+| Permission | Purpose |
+|---|---|
+| `RECORD_AUDIO` | Capture microphone audio during calls |
+| `CAMERA` | Capture video during video calls |
+| `BLUETOOTH` / `BLUETOOTH_CONNECT` | Use Bluetooth audio devices |
+| `MANAGE_OWN_CALLS` | Integrate with the Android telecom framework for call management |
+
+Permissions are requested at runtime when first needed. If a permission is permanently denied, a dialog explains the requirement and links to system settings.
+
+## Call Quality Monitoring
+
+The app continuously monitors call quality data via `ObserveCallQualityDataUseCase`. A call details panel (accessible from the top bar when `call_quality_menu_enabled` is `true`) shows quality metrics. Quality polling switches to a faster interval while the quality panel is open.
+
+## Verification Status in Calls
+
+The call top bar shows MLS and Proteus verification icons for the conversation. This allows users to confirm the end-to-end verified status of the call without leaving the call screen.

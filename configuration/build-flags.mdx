@@ -1,0 +1,346 @@
+---
+title: 'Build flags reference'
+description: 'Complete reference for all build-time configuration flags defined in default.json.'
+sidebarTitle: 'Build flags'
+keywords: ['build flags', 'configuration', 'default.json', 'feature flags', 'customization']
+---
+
+All build-time configuration for Wire Android is defined in [`default.json`](https://github.com/wireapp/wire-android/blob/main/default.json) at the root of the repository. Flags defined at the top level apply to all build flavors. Flavor-specific overrides (under the `flavors` key) take precedence over top-level defaults.
+
+<Info>
+  Values can be overridden by a `custom-reloaded.json` file in your customization repository. See [Customization](/configuration/customization) for the full priority resolution order.
+</Info>
+
+## Application identity
+
+<ParamField body="application_name" type="string" default="Wire">
+  The display name of the application. Currently informational — the value baked into build configs may differ from what is shown in the launcher.
+</ParamField>
+
+<ParamField body="max_accounts" type="int" default="3">
+  Maximum number of Wire accounts that can be signed in simultaneously on a single device.
+</ParamField>
+
+<ParamField body="allow_account_creation" type="boolean" default="true">
+  When `false`, the registration screen is hidden and users can only sign in to an existing account. Useful for enterprise deployments where self-registration is not permitted.
+</ParamField>
+
+<ParamField body="allow_sso_authentication_option" type="boolean" default="true">
+  Controls whether the SSO (Single Sign-On) login option is presented to users. Set to `false` to hide the SSO entry point entirely.
+</ParamField>
+
+---
+
+## Feature flags
+
+<ParamField body="self_deleting_messages" type="boolean" default="true">
+  Enables the self-deleting messages feature, allowing users to send messages that automatically delete after a configurable timer.
+</ParamField>
+
+<ParamField body="enable_guest_room_link" type="boolean" default="true">
+  Allows team members to generate shareable guest links for conversations so external participants can join without a Wire account.
+</ParamField>
+
+<ParamField body="is_password_protected_guest_link_enabled" type="boolean" default="true">
+  When enabled, users can optionally protect guest room links with a password. Requires `enable_guest_room_link` to be `true`.
+</ParamField>
+
+<ParamField body="public_channels_enabled" type="boolean" default="false">
+  Enables the public channels feature, allowing conversations to be discoverable and joinable by users within the same team.
+</ParamField>
+
+<ParamField body="meetings_enabled" type="boolean" default="false">
+  Controls availability of the Meetings feature. Enabled by default in the `dev` flavor.
+</ParamField>
+
+<ParamField body="picture_in_picture_enabled" type="boolean" default="false">
+  Enables picture-in-picture mode for ongoing calls, allowing the call UI to float over other apps.
+</ParamField>
+
+<ParamField body="is_bubble_ui_enabled" type="boolean" default="true">
+  Enables the Android bubble UI for incoming messages and calls, showing floating conversation heads.
+</ParamField>
+
+<ParamField body="channels_history_options_enabled" type="boolean" default="false">
+  Enables controls for configuring message history retention options in channels. Enabled in the `dev` flavor.
+</ParamField>
+
+<ParamField body="conversation_feeder_enabled" type="boolean" default="false">
+  Enables the conversation feeder, an alternative backend-driven approach to loading conversations. Enabled in `dev` and `internal` flavors.
+</ParamField>
+
+<ParamField body="paginated_conversation_list_enabled" type="boolean" default="true">
+  Controls whether the conversation list uses paginated loading. When `false`, all conversations are loaded at once.
+</ParamField>
+
+<ParamField body="call_reactions_enabled" type="boolean" default="true">
+  Enables emoji reactions during active calls.
+</ParamField>
+
+<ParamField body="collabora_integration" type="boolean" default="true">
+  Enables Collabora Online document editing integration within conversations.
+</ParamField>
+
+<ParamField body="file_restriction_enabled" type="boolean" default="false">
+  When `true`, only file types listed in `file_restriction_list` can be shared in conversations.
+</ParamField>
+
+<ParamField body="file_restriction_list" type="string">
+  Comma-separated list of permitted file extensions when `file_restriction_enabled` is `true`. Defaults to a broad list of common formats.
+</ParamField>
+
+<ParamField body="force_constant_bitrate_calls" type="boolean" default="false">
+  Forces calls to use a constant bitrate rather than variable bitrate. Can improve call stability on restricted networks.
+</ParamField>
+
+<ParamField body="enable_crossplatform_backup" type="boolean" default="true">
+  Enables the cross-platform backup and restore feature, allowing conversation history to be transferred between devices.
+</ParamField>
+
+<ParamField body="should_display_release_notes" type="boolean" default="true">
+  Controls whether the app shows an in-app release notes screen after an update.
+</ParamField>
+
+<ParamField body="use_new_login_for_default_backend" type="boolean" default="true">
+  When `true`, the app uses the new unified login flow (email or SSO code in a single field) for the default backend. When `false`, the classic welcome screen with separate login paths is shown. See [ADR-0006](https://github.com/wireapp/wire-android/blob/main/docs/adr/0006-enterprise-login-supporting-both-flows.md).
+</ParamField>
+
+---
+
+## Security flags
+
+<ParamField body="wipe_on_cookie_invalid" type="boolean" default="false">
+  When `true`, all local data is wiped if the session cookie becomes invalid (e.g., after a forced logout from the backend). Recommended for high-security enterprise deployments.
+</ParamField>
+
+<ParamField body="wipe_on_device_removal" type="boolean" default="false">
+  When `true`, local data is wiped when the device is removed from the Wire team by an administrator.
+</ParamField>
+
+<ParamField body="wipe_on_rooted_device" type="boolean" default="false">
+  When `true`, the app detects root access and wipes all local data to protect against extraction via elevated privileges.
+</ParamField>
+
+<Warning>
+  The three wipe flags above are irreversible. Once triggered, users cannot recover their local message history. Test thoroughly before enabling in production builds.
+</Warning>
+
+<ParamField body="lower_keypackage_limit" type="boolean" default="false">
+  Reduces the minimum number of MLS key packages that must be available before the app uploads new ones. Intended for testing environments with constrained key package generation.
+</ParamField>
+
+<ParamField body="enforce_configuration_signature" type="boolean" default="true">
+  When `true`, the app verifies the cryptographic signature of the build configuration before applying it. Disabled in the `dev` flavor to ease local development. Set to `false` only for non-production builds.
+</ParamField>
+
+<ParamField body="configuration_signature_keys" type="array of strings">
+  List of Ed25519 public keys (Base64-encoded) used to verify the configuration signature when `enforce_configuration_signature` is `true`.
+
+  Default production keys:
+  ```
+  MCowBQYDK2VwAyEAFbodixhcegKs4NkpPjjzJYHAxKLlye04SuZ2JNJ9RCc=
+  MCowBQYDK2VwAyEAkAH9FXpKfjp1PX0HeVo5JeYi6h/zDUNwkURIuEZ+7FY=
+  ```
+</ParamField>
+
+<ParamField body="cert_pinning_config" type="object">
+  Certificate pinning configuration. Maps SHA-256 pin hashes to lists of hostname patterns.
+
+  ```json
+  "cert_pinning_config": {
+      "sha256/fnBeCwh0imI9t46Onid49IwvsB5vcf7RCvafRRdCyRE=": [
+          "**.prod-nginz-https.wire.com",
+          "**.prod-nginz-ssl.wire.com",
+          "**.prod-assets.wire.com",
+          "clientblacklist.wire.com"
+      ]
+  }
+  ```
+
+  Only applies to production (`prod`) flavor by default. Set to an empty object `{}` to disable pinning.
+</ParamField>
+
+<ParamField body="is_mls_reset_enabled" type="boolean" default="true">
+  Allows the app to reset the MLS (Messaging Layer Security) state for a conversation. Used as a recovery mechanism when MLS state becomes inconsistent.
+</ParamField>
+
+<ParamField body="use_strict_mls_filter" type="boolean" default="false">
+  When `true`, applies a stricter filter when selecting MLS cipher suites, limiting compatibility to a narrower set of configurations. Set to `false` in the `internal` flavor.
+</ParamField>
+
+<ParamField body="mls_read_receipts_enabled" type="boolean" default="false">
+  Enables read receipts for MLS-encrypted conversations.
+</ParamField>
+
+<ParamField body="ignore_ssl_certificates" type="boolean" default="false">
+  Disables SSL certificate validation. **Only enabled in the `dev` flavor** for connecting to local or self-signed backends. Never enable in production.
+</ParamField>
+
+---
+
+## Enterprise flags
+
+<ParamField body="emm_support_enabled" type="boolean" default="true">
+  Enables Enterprise Mobility Management (EMM) support via Android's `RestrictionsManager`. When enabled, IT administrators can push backend URL, SSO code, and other settings to managed devices via an MDM solution. See [ADR-0008](https://github.com/wireapp/wire-android/blob/main/docs/adr/0008-introducing-emm-config-capabilities.md).
+</ParamField>
+
+<ParamField body="team_app_lock" type="boolean" default="false">
+  When `true`, the app lock (PIN/biometric screen) is enforced at the team level. Users cannot disable it.
+</ParamField>
+
+<ParamField body="team_app_lock_timeout" type="int" default="60">
+  Number of seconds of inactivity before the app lock is triggered when `team_app_lock` is `true`.
+</ParamField>
+
+<ParamField body="max_remote_search_result_count" type="int" default="30">
+  Maximum number of results returned by remote user/team member searches.
+</ParamField>
+
+<ParamField body="limit_team_members_fetch_during_slow_sync" type="int" default="2000">
+  Maximum number of team members fetched in a single slow sync operation. Limits memory pressure on large teams.
+</ParamField>
+
+---
+
+## Developer flags
+
+The following flags are configured per-flavor. They default to `false` at the global level and are enabled only in non-production flavors.
+
+| Flag | `dev` | `staging` | `beta` | `internal` | `fdroid` | `prod` |
+|------|-------|-----------|--------|------------|----------|--------|
+| `developer_features_enabled` | `true` | `true` | `true` | `true` | `false` | `false` |
+| `logging_enabled` | `true` | `true` | `true` | `true` | `false` | `false` |
+| `development_api_enabled` | `true` | `false` | `false` | `false` | `false` | `false` |
+| `ignore_ssl_certificates` | `true` | — | — | — | — | — |
+| `analytics_enabled` | `false` | `true` | `true` | `true` | `false` | `true` |
+
+<ParamField body="developer_features_enabled" type="boolean" default="false">
+  Unlocks in-app developer options such as backend switching, debug menus, and experimental UI toggles. Enabled in all non-production flavors.
+</ParamField>
+
+<ParamField body="logging_enabled" type="boolean" default="false">
+  Enables verbose logging output. Disabled in `prod` and `fdroid` builds to avoid leaking sensitive information into device logs.
+</ParamField>
+
+<ParamField body="development_api_enabled" type="boolean" default="false">
+  Enables use of development/unstable backend API endpoints. Only enabled in the `dev` flavor.
+</ParamField>
+
+<ParamField body="debug_screen_enabled" type="boolean" default="true">
+  Controls visibility of the debug screen accessible from app settings. Note: this flag is set globally to `true` by default; individual flavors may override it.
+</ParamField>
+
+<ParamField body="report_bug_menu_item_enabled" type="boolean" default="true">
+  Shows or hides the "Report a bug" menu item in the app settings screen.
+</ParamField>
+
+<ParamField body="use_async_flush_logging" type="boolean" default="false">
+  Enables asynchronous log flushing for improved performance. Enabled in `dev`, `beta`, and `internal` flavors.
+</ParamField>
+
+<ParamField body="call_quality_menu_enabled" type="boolean" default="false">
+  Enables the call quality feedback menu shown after calls end. Enabled in `dev`, `staging`, `beta`, and `internal` flavors.
+</ParamField>
+
+<ParamField body="nomad_profiles_enabled" type="boolean" default="false">
+  Enables experimental Nomad profile support. Enabled in the `dev` flavor.
+</ParamField>
+
+<ParamField body="db_invalidation_control_enabled" type="boolean" default="false">
+  Enables database invalidation control mechanisms for testing purposes. Enabled in the `dev` flavor, disabled in `internal`.
+</ParamField>
+
+---
+
+## Backend defaults
+
+These URLs define the default backend the app connects to on first launch. Users can switch backends at runtime via a deep link (unless restricted by EMM configuration). See [Backend configuration](/configuration/backend) for details.
+
+<ParamField body="default_backend_url_base_api" type="string" default="https://prod-nginz-https.wire.com">
+  Base URL for the Wire backend REST API.
+</ParamField>
+
+<ParamField body="default_backend_url_accounts" type="string" default="https://account.wire.com">
+  URL for the Wire account management portal, used for password reset and account settings links.
+</ParamField>
+
+<ParamField body="default_backend_url_base_websocket" type="string" default="https://prod-nginz-ssl.wire.com">
+  WebSocket endpoint URL for real-time push messaging when `websocket_enabled_by_default` is `true`.
+</ParamField>
+
+<ParamField body="default_backend_url_teams" type="string" default="https://teams.wire.com">
+  URL for the Wire team management web application.
+</ParamField>
+
+<ParamField body="default_backend_url_blacklist" type="string" default="https://clientblacklist.wire.com/prod">
+  URL of the client version blacklist endpoint. The app periodically fetches this to enforce minimum client versions.
+</ParamField>
+
+<ParamField body="default_backend_url_website" type="string" default="https://wire.com">
+  Base URL for the Wire marketing/documentation website, used for help and support links.
+</ParamField>
+
+<ParamField body="default_backend_title" type="string" default="wire-production">
+  Human-readable label for the default backend, displayed in developer/debug screens.
+</ParamField>
+
+<ParamField body="websocket_enabled_by_default" type="boolean" default="false">
+  When `true`, the app prefers persistent WebSocket connections for push notifications instead of FCM. Useful for environments without Google Play Services or on F-Droid builds.
+</ParamField>
+
+<ParamField body="enable_blacklist" type="boolean" default="true">
+  When `true`, the app checks `default_backend_url_blacklist` and blocks usage if the current app version is listed.
+</ParamField>
+
+---
+
+## Push notifications
+
+<ParamField body="firebase_push_sender_id" type="string" default="782078216207">
+  Firebase Cloud Messaging (FCM) sender ID for the production project. Override per-flavor for staging/dev environments.
+</ParamField>
+
+<ParamField body="firebase_app_id" type="string" default="1:782078216207:android:d3db2443512d2055">
+  Firebase application ID for the production project.
+</ParamField>
+
+<ParamField body="google_api_key" type="string">
+  Google API key associated with the Firebase project for push notifications.
+</ParamField>
+
+<ParamField body="fcm_project_id" type="string" default="w966768976">
+  Firebase project ID. Staging and dev flavors use `wiregcmpushstaging`.
+</ParamField>
+
+<ParamField body="background_notification_retry_enabled" type="boolean" default="true">
+  Enables exponential backoff retry logic for background notification sync failures.
+</ParamField>
+
+<ParamField body="background_notification_stay_alive_seconds" type="int" default="3">
+  Duration (in seconds) the sync connection stays alive after receiving a push notification when `background_notification_retry_enabled` is `true`.
+</ParamField>
+
+---
+
+## Analytics
+
+<ParamField body="analytics_enabled" type="boolean">
+  Enables anonymous usage analytics via Countly. Disabled by default in the `dev` and `fdroid` flavors. Users can also opt out in app settings.
+
+  | Flavor | Default |
+  |--------|---------|
+  | `prod` | `true` |
+  | `staging` | `true` |
+  | `beta` | `true` |
+  | `internal` | `true` |
+  | `dev` | `false` |
+  | `fdroid` | `false` |
+</ParamField>
+
+<ParamField body="analytics_app_key" type="string">
+  Countly application key. Production builds use `4483f7a58ae3e70b3780319c4ccb5c88a037be49`. Non-production flavors use a separate key.
+</ParamField>
+
+<ParamField body="analytics_server_url" type="string" default="https://wire.count.ly/">
+  Base URL of the Countly analytics server.
+</ParamField>

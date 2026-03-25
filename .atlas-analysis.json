@@ -1,28 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Wire Android",
+  "projectType": "saas",
+  "projectName": "Wire Android",
+  "projectDescription": "Wire for Android is an open-source, end-to-end encrypted messaging and calling app built with Kotlin and Jetpack Compose.",
   "theme": "willow",
-  "colors": {
-    "primary": "#848484",
-    "light": "#0c0c0c",
-    "dark": "#d1d1d1"
-  },
-  "favicon": "https://media.brand.dev/29933797-f141-4517-a46f-0a267aa9e57b.jpg",
-  "logo": {
-    "light": "https://media.brand.dev/b732fdef-07e5-4794-ab62-5ae72908003b.svg",
-    "dark": "https://media.brand.dev/b732fdef-07e5-4794-ab62-5ae72908003b.svg"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/wireapp/wire-android"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/wireapp/wire-android"
-    }
-  },
+  "primaryColor": "#848484",
+  "lightColor": "#0c0c0c",
+  "darkColor": "#d1d1d1",
   "navigation": {
     "tabs": [
       {
@@ -93,5 +76,35 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "End-to-end encrypted messaging (MLS and Proteus protocols)",
+    "Voice and video calling with AVS (Audio-Video Signaling)",
+    "Multi-account support (up to 3 accounts)",
+    "Team collaboration with group conversations and channels",
+    "Self-deleting messages and message reactions",
+    "End-to-end identity (E2EI) certificate enrollment",
+    "Enterprise Mobility Management (EMM) with managed configurations",
+    "Legal hold compliance for enterprise deployments",
+    "Cross-platform backup and restore",
+    "Custom build flavors for white-label deployments",
+    "F-Droid distribution (no closed-source dependencies)",
+    "Biometric app lock"
+  ],
+  "publicApiSurface": [
+    "./gradlew compileApp",
+    "./gradlew assembleApp",
+    "./gradlew runApp",
+    "./gradlew runUnitTests",
+    "./gradlew runAcceptanceTests",
+    "./gradlew testCoverage",
+    "./gradlew staticCodeAnalysis",
+    "default.json — build-time configuration flags",
+    "custom-reloaded.json — white-label customization overrides",
+    "CUSTOM_REPOSITORY / CUSTOM_FOLDER / CLIENT_FOLDER env vars — custom build injection",
+    "com.wire.android.ui — Jetpack Compose UI layer",
+    "com.wire.android.feature.e2ei — E2EI enrollment",
+    "com.wire.android.emm — Enterprise Mobility Management",
+    "com.wire.android.notification — Push notification handling"
+  ]
 }

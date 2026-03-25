@@ -1,0 +1,244 @@
+---
+title: Build Types
+description: Debug and release build types, ProGuard rules, flavor combinations, baseline profiles, and SBOM generation for Wire Android.
+---
+
+## Overview
+
+Wire Android uses two primary build types — `debug` and `release` — combined with six product flavors to produce targeted build variants. Additional specialized build types (`compat`, `compatrelease`, `benchmark`) exist for compatibility and performance testing.
+
+Build types and flavors are defined in `buildSrc/src/main/kotlin/BuildTypes.kt` and `flavor/ProductFlavors.kt`, with the Gradle configuration applied via `buildSrc/src/main/kotlin/scripts/variants.gradle.kts`.
+
+## Build Types
+
+<CardGroup cols={2}>
+  <Card title="debug" icon="bug">
+    Non-minified, debuggable build. Includes extra tooling (LeakCanary), adds `.debug` suffix to the application ID, and runs slower due to the lack of minification. Suitable for development and profiling.
+  </Card>
+  <Card title="release" icon="rocket">
+    Minified and non-debuggable. Runs ProGuard/R8 shrinking and obfuscation. This is the build type used for Play Store and public distribution.
+  </Card>
+  <Card title="compat" icon="wrench">
+    Initialized from `release` with minification enabled. Uses its own keystore (`compat`). Dependency fallback points to `release`. Used for backward-compatible distribution.
+  </Card>
+  <Card title="compatrelease" icon="shield-check">
+    Initialized from `release`, also minified and non-debuggable. The primary build type for **Play Store production releases** (Prod and F-Droid flavors). Has its own keystore configuration.
+  </Card>
+  <Card title="benchmark" icon="gauge">
+    Initialized from `release` and minified, but signed with the debug keystore. Dependency fallback points to `release`. Used exclusively for Macrobenchmark performance profiling.
+  </Card>
+</CardGroup>
+
+### debug vs release at a glance
+
+| Property | `debug` | `release` |
+|---|---|---|
+| `isMinifyEnabled` | `false` | `true` |
+| `isDebuggable` | `true` | `false` |
+| Application ID suffix | `.debug` appended | No suffix |
+| ProGuard/R8 | Not applied | `proguard-android-optimize.txt` + `proguard-rules.pro` |
+| LeakCanary | Included (`debugImplementation`) | Excluded |
+| Compose UI tooling | Included (`debugImplementation`) | Excluded |
+| Signing | Debug keystore (when signing enabled) | Release keystore |
+
+<Note>
+Debug builds run slower because R8 code shrinking and optimization are disabled. Use `release` or `benchmark` builds when measuring performance.
+</Note>
+
+## Product Flavors
+
+All six flavors share a single `default` dimension. Each flavor is defined in `buildSrc/src/main/kotlin/flavor/ProductFlavors.kt` and configured via `app/default.json`.
+
+| Flavor | App Name | Application ID | Icon Color | Backend | Logging | Analytics |
+|--------|----------|----------------|------------|---------|---------|----------|
+| `dev` | Wire Dev | `com.waz.zclient.dev` | Red | Wire Staging (anta) | Enabled | Disabled |
+| `staging` | Wire Staging | `com.waz.zclient.dev` | Orange | Wire Staging | Enabled | Enabled |
+| `internal` | Wire Internal | `com.wire.internal` | Green | Wire Prod | Enabled | Enabled |
+| `beta` | Wire Beta | `com.wire.android.internal` | Blue | Wire Prod | Enabled | Enabled |
+| `prod` | Wire | `com.wire` | White | Wire Prod | Disabled | Enabled |
+| `fdroid` | Wire | `com.wire` | White | Wire Prod | Disabled | Disabled |
+
+<Warning>
+Logs on all builds except `prod` and `fdroid` are uploaded to a third-party service for developer analysis. Logs on `prod` and `fdroid` can be enabled locally but are never uploaded anywhere.
+</Warning>
+
+### Non-free vs FOSS source sets
+
+The `fdroid` flavor uses separate source sets to exclude closed-source dependencies:
+
+- **Non-free flavors** (`prod`, `internal`, `staging`, `beta`, `dev`): include Firebase FCM, Google Play Services location, and Datadog crash reporting.
+- **FOSS flavor** (`fdroid`): uses `src/foss/kotlin` and `src/prod/kotlin` source sets; Firebase and Google Play Services dependencies are excluded.
+
+### Default flavor and build type resolution
+
+The build variant resolved by Gradle is controlled by environment variables. The defaults when no environment variable is set are `dev` flavor and `debug` build type.
+
+```kotlin
+// buildSrc/src/main/kotlin/Default.kt
+fun resolvedBuildFlavor(): String = explicitBuildFlavor() ?: ProductFlavors.Dev.buildName
+fun resolvedBuildType(): String   = explicitBuildType()   ?: BuildTypes.DEBUG
+```
+
+Set the environment variables to override:
+
+```bash
+export flavor=prod
+export buildType=release
+```
+
+## Flavor + Build Type Combinations
+
+Gradle task names follow the pattern `assemble<Flavor><BuildType>` (capitalized). Common combinations:
+
+```bash
+# Development — fastest iteration cycle
+./gradlew app:assembleDevDebug
+
+# Staging QA build
+./gradlew app:assembleStagingCompat
+
+# Beta dogfood build (deployed on main branch push)
+./gradlew app:assembleBetaRelease
+
+# Internal dogfood build (deployed on develop branch push)
+./gradlew app:assembleInternalCompat
+
+# Production Play Store release
+./gradlew app:assembleProdCompatrelease
+
+# F-Droid production release
+./gradlew app:assembleFdroidCompatrelease
+
+# Bundle (AAB) instead of APK
+./gradlew app:bundleProdCompatrelease
+```
+
+<Tip>
+The top-level helper tasks compile or assemble all variants:
+
+```bash
+./gradlew compileApp   # Compile only
+./gradlew assembleApp  # Build APK
+./gradlew runApp       # Build + install on connected device
+```
+</Tip>
+
+## Signing Configuration
+
+Signing is controlled by the `ENABLE_SIGNING` environment variable. When `ENABLE_SIGNING=TRUE`, each build type reads its keystore from environment variables:
+
+| Build type | Keystore env vars |
+|---|---|
+| `debug` | `KEYSTORE_FILE_PATH_DEBUG`, `KEYSTOREPWD_DEBUG`, `KEYSTORE_KEY_NAME_DEBUG`, `KEYPWD_DEBUG` |
+| `release` | `KEYSTORE_FILE_PATH_RELEASE`, `KEYSTOREPWD_RELEASE`, `KEYSTORE_KEY_NAME_RELEASE`, `KEYPWD_RELEASE` |
+| `compat` | `KEYSTORE_FILE_PATH_COMPAT`, `KEYSTOREPWD_COMPAT`, `KEYSTORE_KEY_NAME_COMPAT`, `KEYPWD_COMPAT` |
+| `compatrelease` | `KEYSTORE_FILE_PATH_COMPAT_RELEASE`, `KEYSTOREPWD_COMPAT_RELEASE`, `KEYSTORE_KEY_NAME_COMPAT_RELEASE`, `KEYPWD_COMPAT_RELEASE` |
+| `benchmark` | Reuses debug keystore env vars |
+
+When signing is disabled (local development), `debug` signing is used as a fallback for release builds.
+
+## ProGuard / R8 Rules
+
+All minified build types apply two rule files:
+
+```kotlin
+proguardFiles(
+    getDefaultProguardFile("proguard-android-optimize.txt"),
+    "proguard-rules.pro"
+)
+```
+
+The project-specific rules in `app/proguard-rules.pro` preserve classes that are accessed reflectively or from native code:
+
+```proguard
+# End-to-end encryption (CryptoBox via JNI)
+-keep class com.wire.cryptobox.** { *; }
+
+# Native methods (JNI)
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
+}
+
+# SQLCipher (encrypted database)
+-keep,includedescriptorclasses class net.sqlcipher.** { *; }
+-keep,includedescriptorclasses interface net.sqlcipher.** { *; }
+
+# Compose Destinations routing
+-keepnames class * extends com.ramcosta.composedestinations.spec.Route
+
+# JNA (native audio-video signaling)
+-keep class com.sun.jna.** { *; }
+-keep class * extends com.sun.jna.** { *; }
+
+# AVS/WebRTC (accessed from native FlowManager_attach)
+-keep class org.webrtc.** { *; }
+-keep class com.waz.call.FlowManager { *; }
+-keep class com.waz.avs.VideoRenderer { *; }
+
+# Room generated implementation classes (reflective instantiation)
+-keep class **_Impl extends androidx.room.RoomDatabase { *; }
+
+# WorkManager worker class names must remain stable
+-keepnames class com.wire.kalium.logic.sync.PendingMessagesSenderWorker
+-keepnames class com.wire.kalium.logic.sync.periodic.UserConfigSyncWorker
+-keepnames class com.wire.kalium.logic.sync.periodic.UpdateApiVersionsWorker
+
+# WorkManager InputMerger (created reflectively)
+-keep class androidx.work.OverwritingInputMerger { <init>(); *; }
+-keep class androidx.work.ArrayCreatingInputMerger { <init>(); *; }
+```
+
+Every library module (e.g. `core/media`, `features/meetings`) also has its own `proguard-rules.pro`. R8 merges all rules at build time.
+
+## Baseline Profile
+
+The file `app/src/main/baseline-prof.txt` contains a precompiled baseline profile used by the Android runtime to AOT-compile critical code paths at install time. This reduces startup latency and improves initial frame rendering for release builds.
+
+The profile is compiled from real user interaction traces and lists hot classes and methods in a compact textual format. The `androidx.profileinstaller` library (added as a dependency in `app/build.gradle.kts`) installs the profile on devices running Android 9+.
+
+```kotlin
+// app/build.gradle.kts
+implementation(libs.androidx.profile.installer)
+```
+
+To regenerate the baseline profile, run the Macrobenchmark module with the `benchmark` build type:
+
+```bash
+./gradlew :benchmark:connectedBenchmarkAndroidTest
+```
+
+## SBOM Generation
+
+The project produces a [CycloneDX](https://cyclonedx.org/) Software Bill of Materials (SBOM) in JSON format, listing all runtime dependencies and their licenses.
+
+The SBOM task is defined in `sbom.gradle.kts` and wired to the `cyclonedxBom` task from the CycloneDX Gradle plugin:
+
+```bash
+# Generate SBOM
+./gradlew generateSbom
+
+# Output: build/reports/cyclonedx/
+```
+
+Configuration in `build.gradle.kts`:
+
+```kotlin
+tasks.cyclonedxBom {
+    includeBomSerialNumber = true
+    includeLicenseText    = false
+    componentName         = "wire-android"
+}
+
+// Only runtime classpaths are included; test, lint, annotation, and KSP
+// configurations are excluded:
+tasks.withType<CyclonedxDirectTask>().configureEach {
+    includeConfigs.set(listOf(".*[Rr]untimeClasspath.*"))
+    skipConfigs.set(listOf(".*[Tt]est.*", ".*[Ll]int.*", ".*[Aa]nnotation.*", ".*[Kk]sp.*"))
+}
+```
+
+In CI, each build job runs `generateSbom` automatically and uploads the output as a 30-day retention artifact named `sbom-<Flavor>-<Variant>`.
+
+<Info>
+The SBOM step is skipped for Dependabot-triggered builds (`github.actor != 'dependabot[bot]'`) and is set to `continue-on-error: true` so a generation failure does not block the release.
+</Info>

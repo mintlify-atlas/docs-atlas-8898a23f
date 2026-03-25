@@ -1,0 +1,171 @@
+---
+title: 'Testing'
+description: 'How to run unit tests, UI tests, and code coverage reports for Wire Android.'
+---
+
+Wire Android uses a layered testing strategy covering unit tests, instrumented UI tests, and static analysis. This page describes how to run each type and how the test infrastructure is organised.
+
+## Gradle tasks
+
+The following Gradle tasks are available from the project root:
+
+| Task | Description |
+|------|-------------|
+| `./gradlew runUnitTests` | Runs all unit tests |
+| `./gradlew runAcceptanceTests` | Runs all acceptance tests on a connected device |
+| `./gradlew testCoverage` | Generates a test code coverage report |
+| `./gradlew staticCodeAnalysis` | Runs static code analysis (Detekt) |
+
+## Unit tests
+
+Unit tests run on the JVM and do not require a connected device or emulator.
+
+```bash
+./gradlew runUnitTests
+```
+
+### Parameterized tests with JUnit 5
+
+The project uses JUnit 5 parameterized tests to avoid writing multiple test cases for the same scenario with different inputs. Tests annotated with `@ParameterizedTest` receive their parameters as method arguments.
+
+```kotlin
+@ParameterizedTest
+@MethodSource("provideInputs")
+fun `given various inputs, when processed, then correct result`(input: String, expected: String) {
+    val result = process(input)
+    assertEquals(expected, result)
+}
+```
+
+Refer to the [JUnit 5 parameterized tests documentation](https://junit.org/junit5/docs/current/user-guide/#writing-tests-parameterized-tests) for the full set of available argument sources.
+
+## Acceptance and UI tests
+
+Acceptance tests are instrumented tests that run on a connected Android device or emulator.
+
+```bash
+./gradlew runAcceptanceTests
+```
+
+<Warning>
+A connected device or running emulator is required to run acceptance tests.
+</Warning>
+
+### UIAutomator framework
+
+Wire Android migrated from Appium to [UIAutomator](https://developer.android.com/training/testing/other-components/ui-automator) for integrated UI testing. UIAutomator is part of the Android SDK and is more flexible than Espresso for cross-app testing scenarios.
+
+UI tests live in a dedicated `tests/` module with the following structure:
+
+```
+wire-android
+├── app/
+├── core/
+├── features/
+└── tests/
+    ├── testsCore/       # Core UI test cases
+    └── testsSupport/    # Shared test utilities and helpers
+```
+
+This structure allows shared logic to be extracted into `testsSupport` and reused across test modules, enabling parallel execution across devices if needed.
+
+### Test annotations and filtering
+
+UI tests use custom annotations that enable fine-grained filtering and structured reporting:
+
+```kotlin
+@TestCaseId("TC-8602")
+@Category("criticalFlow")
+@Tag(key = "feature", value = "calling")
+fun `given a call, when answered, then connected`() { ... }
+```
+
+Filtering is handled by `com.wire.android.tests.support.suite.TaggedFilter`. Only tests matching the filter run; all others are excluded entirely and do not appear in reports.
+
+### Running specific test subsets
+
+<Tabs>
+  <Tab title="By test case ID">
+    ```bash
+    ./gradlew :tests:testsCore:connectedDebugAndroidTest \
+      -Pandroid.testInstrumentationRunnerArguments.testCaseId=TC-8602
+    ```
+  </Tab>
+  <Tab title="By category">
+    ```bash
+    ./gradlew :tests:testsCore:connectedDebugAndroidTest \
+      -Pandroid.testInstrumentationRunnerArguments.category=criticalFlow
+    ```
+  </Tab>
+  <Tab title="By tag">
+    ```bash
+    ./gradlew :tests:testsCore:connectedDebugAndroidTest \
+      -Pandroid.testInstrumentationRunnerArguments.tagKey=feature \
+      -Pandroid.testInstrumentationRunnerArguments.tagValue=calling
+    ```
+
+    <Note>Both `tagKey` and `tagValue` must match for a test to be included.</Note>
+  </Tab>
+</Tabs>
+
+### Allure reports
+
+The UI test suite integrates with [Allure](https://allurereport.org/) for rich HTML reporting. Allure results are written to the device at:
+
+```
+/sdcard/googletest/test_outputfiles/allure-results
+```
+
+To pull results from the device and generate a local report:
+
+```bash
+# Pull results from the device
+adb exec-out sh -c 'cd /sdcard/googletest/test_outputfiles && tar cf - allure-results' > allure-results.tar
+
+# Extract locally
+rm -rf allure-results
+mkdir allure-results
+tar xf allure-results.tar -C allure-results
+
+# Open the interactive HTML report
+allure serve allure-results/allure-results
+```
+
+The report shows passed and failed tests, failure screenshots, and tag metadata. Only executed tests appear — filtered-out tests are not included.
+
+## Static code analysis
+
+The project uses [Detekt](https://detekt.dev/) for Kotlin static analysis.
+
+```bash
+./gradlew staticCodeAnalysis
+```
+
+Detekt also runs as a pre-commit Git hook (see [Contribution guidelines](/contributing/guidelines)).
+
+## Code coverage
+
+```bash
+./gradlew testCoverage
+```
+
+Coverage reports are uploaded to [Codecov](https://codecov.io/gh/wireapp/wire-android) and displayed on pull requests.
+
+### Coverage thresholds
+
+The project targets the following coverage levels (configured in `codecov.yml`):
+
+| Scope | Target | Behaviour |
+|-------|--------|-----------|
+| Project | Auto (based on base branch) | Fails if coverage drops more than 2% | 
+| Patch (PR diff) | 80% | Informational only — does not fail the build |
+
+### Paths excluded from coverage
+
+The following paths are excluded from coverage measurement:
+
+- `buildSrc/`
+- `kalium/` (submodule)
+- Test source sets (`**/test/**`, `**/androidTest/**`)
+- Generated screens (`**/*Screen*.kt`)
+- Mock, theme, common, navigation, and DI directories
